@@ -1,0 +1,27 @@
+node_modules/
+dist/
+coverage/
+automation/auth/data/
+experiments/auth-storage-repro/data/
+
+target/
+src-tauri/target/
+src-tauri/resources/runtime/*
+!src-tauri/resources/runtime/.gitkeep
+
+data/cache/
+data/session/
+auth.local.json
+*.db
+*.sqlite
+*.sqlite3
+
+.DS_Store
+Thumbs.db
+
+# Playwright
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
+/playwright/.auth/

@@ -1,0 +1,106 @@
+import type { Browser, BrowserContext, Page } from '@playwright/test'
+import { readdir, rm, writeFile } from 'node:fs/promises'
+import { basename } from 'node:path'
+import { authPaths } from '../auth/paths.js'
+import {
+  collectorPaths,
+  ensureCollectorDirs,
+  resolveArtifactHtml,
+  resolveArtifactScreenshot,
+} from './paths.js'
+
+export function normalizeText(value: string | null | undefined): string {
+  return (value ?? '').replace(/\s+/g, ' ').trim()
+}
+
+export async function createAuthenticatedContext(browser: Browser) {
+  return browser.newContext({
+    storageState: authPaths.storageStateFile,
+  })
+}
+
+export async function gotoSettled(page: Page, url: string) {
+  await page.goto(url, { waitUntil: 'domcontentloaded' })
+  await page.waitForTimeout(3000)
+}
+
+export async function writePageArtifacts(page: Page, prefix: string) {
+  await ensureCollectorDirs()
+
+  const htmlPath = resolveArtifactHtml(prefix)
+  const screenshotPath = resolveArtifactScreenshot(prefix)
+
+  await writeFile(htmlPath, await page.content(), 'utf8')
+  await page.screenshot({ path: screenshotPath, fullPage: true })
+
+  return {
+    htmlPath,
+    screenshotPath,
+  }
+}
+
+export async function writeJsonFile(path: string, data: unknown) {
+  await ensureCollectorDirs()
+  await writeFile(path, `${JSON.stringify(data, null, 2)}\n`, 'utf8')
+}
+
+export async function pruneStaleCourseCache(activeCourseIds: string[]) {
+  await ensureCollectorDirs()
+
+  const keep = new Set(activeCourseIds)
+  const files = await readdir(collectorPaths.cacheDir)
+  const staleFiles = files.filter((file) => {
+    const match = file.match(
+      /^(course-module|material-list|notice-list|assignment-list)-(\d+)\.json$/,
+    )
+    return match ? !keep.has(match[2]) : false
+  })
+
+  await Promise.all(
+    staleFiles.map((file) => rm(`${collectorPaths.cacheDir}\\${file}`, { force: true })),
+  )
+
+  const artifactFiles = await readdir(collectorPaths.artifactsDir)
+  const staleArtifacts = artifactFiles.filter((file) => {
+    const match = basename(file).match(
+      /^(course-module|material-list|notice-list|assignment-list)-(\d+)\.(html|png)$/,
+    )
+    return match ? !keep.has(match[2]) : false
+  })
+
+  await Promise.all(
+    staleArtifacts.map((file) =>
+      rm(`${collectorPaths.artifactsDir}\\${file}`, { force: true }),
+    ),
+  )
+}
+
+export async function runWithConcurrency<TInput, TOutput>(
+  items: TInput[],
+  concurrency: number,
+  worker: (item: TInput, index: number) => Promise<TOutput>,
+): Promise<TOutput[]> {
+  const limit = Math.max(1, Math.min(concurrency, items.length || 1))
+  const results = new Array<TOutput>(items.length)
+  let cursor = 0
+
+  async function consume() {
+    while (true) {
+      const index = cursor
+      cursor += 1
+      if (index >= items.length) {
+        return
+      }
+
+      results[index] = await worker(items[index], index)
+    }
+  }
+
+  await Promise.all(Array.from({ length: limit }, () => consume()))
+  return results
+}
+
+export async function closeQuietly(context: BrowserContext, page?: Page) {
+  await page?.close().catch(() => {})
+  await context.close().catch(() => {})
+}

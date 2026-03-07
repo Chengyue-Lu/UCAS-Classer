@@ -1,0 +1,27 @@
+{
+  "name": "ucasclasser-develop",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "check": "tsc -p tsconfig.scripts.json --noEmit",
+    "auth:reset": "tsx automation/auth/reset.ts",
+    "auth:open": "tsx automation/auth/login-and-save.ts",
+    "auth:login": "tsx automation/auth/login-and-save.ts",
+    "auth:check": "tsx automation/auth/check-auth.ts",
+    "auth:check:headed": "tsx automation/auth/check-auth.ts --headed",
+    "webcheck": "tsx automation/auth/webcheck.ts",
+    "courses:collect": "tsx automation/collectors/run-course-list.ts",
+    "collect:all": "tsx automation/collectors/run-full-collect.ts",
+    "repro:auth:reset": "tsx experiments/auth-storage-repro/reset.ts",
+    "repro:auth:login": "tsx experiments/auth-storage-repro/login-and-save.ts",
+    "repro:auth:check": "tsx experiments/auth-storage-repro/check-auth.ts",
+    "playwright:install": "playwright install"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.2",
+    "@types/node": "^24.12.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  }
+}
