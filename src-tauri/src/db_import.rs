@@ -80,13 +80,24 @@ struct MaterialListSnapshot {
     course_id: String,
     course_name: String,
     item_count: usize,
+    #[serde(rename = "fileCount")]
+    _file_count: usize,
+    #[serde(rename = "folderCount")]
+    _folder_count: usize,
     items: Vec<MaterialRecord>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct MaterialRecord {
-    data_id: String,
+    node_id: String,
+    parent_node_id: Option<String>,
+    node_type: String,
+    item_index: usize,
+    path: String,
+    depth: usize,
+    data_id: Option<String>,
+    folder_id: Option<String>,
     name: String,
     r#type: Option<String>,
     object_id: Option<String>,
@@ -95,6 +106,7 @@ struct MaterialRecord {
     created_at: Option<String>,
     download_url: Option<String>,
     read_url: Option<String>,
+    open_url: Option<String>,
     source: Option<String>,
 }
 
@@ -111,11 +123,24 @@ struct NoticeListSnapshot {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct NoticeRecord {
+    notice_id: String,
+    notice_enc: Option<String>,
     title: String,
     detail_url: Option<String>,
     published_at: Option<String>,
     publisher: Option<String>,
     raw_text: String,
+    detail_text: Option<String>,
+    detail_html: Option<String>,
+    detail_collected_at: Option<String>,
+    attachments: Vec<NoticeAttachmentRecord>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NoticeAttachmentRecord {
+    name: String,
+    url: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -350,11 +375,21 @@ fn init_schema(connection: &Connection) -> Result<(), String> {
                 collected_at TEXT NOT NULL
             );
 
-            CREATE TABLE IF NOT EXISTS materials (
+            DROP TABLE IF EXISTS materials;
+            DROP TABLE IF EXISTS notices;
+
+            CREATE TABLE IF NOT EXISTS material_nodes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 course_id TEXT NOT NULL,
                 course_name TEXT NOT NULL,
-                data_id TEXT NOT NULL,
+                node_id TEXT NOT NULL,
+                parent_node_id TEXT,
+                node_type TEXT NOT NULL,
+                item_index INTEGER NOT NULL,
+                path TEXT NOT NULL,
+                depth INTEGER NOT NULL,
+                data_id TEXT,
+                folder_id TEXT,
                 name TEXT NOT NULL,
                 type TEXT,
                 object_id TEXT,
@@ -363,21 +398,37 @@ fn init_schema(connection: &Connection) -> Result<(), String> {
                 created_at TEXT,
                 download_url TEXT,
                 read_url TEXT,
+                open_url TEXT,
                 source TEXT,
                 collected_at TEXT NOT NULL,
-                UNIQUE(course_id, data_id)
+                UNIQUE(course_id, node_id)
             );
 
-            CREATE TABLE IF NOT EXISTS notices (
+            CREATE TABLE IF NOT EXISTS notice_entries (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 course_id TEXT NOT NULL,
                 course_name TEXT NOT NULL,
+                notice_id TEXT NOT NULL,
                 item_index INTEGER NOT NULL,
                 title TEXT NOT NULL,
+                notice_enc TEXT,
                 detail_url TEXT,
                 published_at TEXT,
                 publisher TEXT,
                 raw_text TEXT NOT NULL,
+                detail_text TEXT,
+                detail_html TEXT,
+                detail_collected_at TEXT,
+                collected_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS notice_attachments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                course_id TEXT NOT NULL,
+                notice_id TEXT NOT NULL,
+                attachment_index INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                url TEXT NOT NULL,
                 collected_at TEXT NOT NULL
             );
 
@@ -404,8 +455,9 @@ fn clear_tables(transaction: &Transaction<'_>) -> Result<(), String> {
         .execute_batch(
             "
             DELETE FROM assignments;
-            DELETE FROM notices;
-            DELETE FROM materials;
+            DELETE FROM notice_attachments;
+            DELETE FROM notice_entries;
+            DELETE FROM material_nodes;
             DELETE FROM course_modules;
             DELETE FROM courses;
             ",
@@ -510,10 +562,17 @@ fn insert_materials(
     for item in &snapshot.items {
         transaction
             .execute(
-                "INSERT INTO materials (
+                "INSERT INTO material_nodes (
                     course_id,
                     course_name,
+                    node_id,
+                    parent_node_id,
+                    node_type,
+                    item_index,
+                    path,
+                    depth,
                     data_id,
+                    folder_id,
                     name,
                     type,
                     object_id,
@@ -522,13 +581,21 @@ fn insert_materials(
                     created_at,
                     download_url,
                     read_url,
+                    open_url,
                     source,
                     collected_at
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
                 params![
                     snapshot.course_id,
                     snapshot.course_name,
+                    item.node_id,
+                    item.parent_node_id,
+                    item.node_type,
+                    item.item_index as i64,
+                    item.path,
+                    item.depth as i64,
                     item.data_id,
+                    item.folder_id,
                     item.name,
                     item.r#type,
                     item.object_id,
@@ -537,14 +604,15 @@ fn insert_materials(
                     item.created_at,
                     item.download_url,
                     item.read_url,
+                    item.open_url,
                     item.source,
                     snapshot.collected_at,
                 ],
             )
             .map_err(|error| {
                 format!(
-                    "failed to insert material `{}` for course `{}`: {error}",
-                    item.data_id, snapshot.course_id
+                    "failed to insert material node `{}` for course `{}`: {error}",
+                    item.node_id, snapshot.course_id
                 )
             })?;
     }
@@ -559,26 +627,36 @@ fn insert_notices(
     for (index, item) in snapshot.items.iter().enumerate() {
         transaction
             .execute(
-                "INSERT INTO notices (
+                "INSERT INTO notice_entries (
                     course_id,
                     course_name,
+                    notice_id,
                     item_index,
                     title,
+                    notice_enc,
                     detail_url,
                     published_at,
                     publisher,
                     raw_text,
+                    detail_text,
+                    detail_html,
+                    detail_collected_at,
                     collected_at
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
                 params![
                     snapshot.course_id,
                     snapshot.course_name,
+                    item.notice_id,
                     index as i64,
                     item.title,
+                    item.notice_enc,
                     item.detail_url,
                     item.published_at,
                     item.publisher,
                     item.raw_text,
+                    item.detail_text,
+                    item.detail_html,
+                    item.detail_collected_at,
                     snapshot.collected_at,
                 ],
             )
@@ -588,6 +666,34 @@ fn insert_notices(
                     index, snapshot.course_id
                 )
             })?;
+
+        for (attachment_index, attachment) in item.attachments.iter().enumerate() {
+            transaction
+                .execute(
+                    "INSERT INTO notice_attachments (
+                        course_id,
+                        notice_id,
+                        attachment_index,
+                        name,
+                        url,
+                        collected_at
+                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    params![
+                        snapshot.course_id,
+                        item.notice_id,
+                        attachment_index as i64,
+                        attachment.name,
+                        attachment.url,
+                        snapshot.collected_at,
+                    ],
+                )
+                .map_err(|error| {
+                    format!(
+                        "failed to insert notice attachment `{}` for course `{}`: {error}",
+                        attachment_index, snapshot.course_id
+                    )
+                })?;
+        }
     }
 
     Ok(())

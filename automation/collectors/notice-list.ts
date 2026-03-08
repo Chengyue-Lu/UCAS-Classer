@@ -1,9 +1,10 @@
-import type { Browser } from '@playwright/test'
+import type { Browser, BrowserContext } from '@playwright/test'
 import { launchBrowser } from '../auth/browser.js'
 import { assertAuthenticatedPage, ensureStorageStateFile } from './session.js'
 import { resolveNoticeListJson } from './paths.js'
 import type {
   CourseModuleUrls,
+  NoticeAttachment,
   NoticeListSnapshot,
   NoticeSummary,
 } from './types.js'
@@ -15,6 +16,16 @@ import {
   writeJsonFile,
   writePageArtifacts,
 } from './utils.js'
+
+type RawNoticeItem = {
+  noticeId: string | null
+  noticeEnc: string | null
+  title: string
+  publishedAt: string | null
+  publisher: string | null
+  rawText: string
+  detailUrl: string | null
+}
 
 export async function collectNoticeList(
   modules: CourseModuleUrls,
@@ -43,7 +54,22 @@ export async function collectNoticeList(
   try {
     await gotoSettled(page, modules.noticesUrl)
     await assertAuthenticatedPage(page, modules.noticesUrl)
-    await page.waitForSelector('h3.noticeTitle, #noticeContent', { timeout: 15_000 })
+    await page.waitForFunction(
+      () => {
+        const container = document.querySelector('#noticeContent')
+        if (!container) {
+          return false
+        }
+
+        return (
+          container.querySelector('li .noticeTop') !== null ||
+          container.querySelector('input[name="moreNotice"]') !== null ||
+          container.querySelector('input[name="lastIdBack"]') !== null
+        )
+      },
+      undefined,
+      { timeout: 15_000 },
+    )
 
     const items = await page.evaluate(function () {
       const container = document.querySelector('#noticeContent')
@@ -51,54 +77,74 @@ export async function collectNoticeList(
         return []
       }
 
-      const directChildren = Array.from(container.children).filter(function (node) {
-        return node.tagName !== 'INPUT'
+      return Array.from(container.querySelectorAll('li')).map((node) => {
+        const root = node.querySelector('.noticeTop') as HTMLElement | null
+        const titleAnchor = node.querySelector('h3 a') as HTMLAnchorElement | null
+        const detailCall = root?.getAttribute('onclick') ?? ''
+        const match = detailCall.match(
+          /showUserListdetail\('([^']+)','([^']+)',(\d+),(\d+),'([^']+)',(\d+),'([^']+)'\)/,
+        )
+
+        let detailUrl = null
+        if (match) {
+          const [, noticeEnc, noticeId, courseId, classId, openc, cpi, ut] = match
+          detailUrl = new URL(
+            `/mooc-ans/schoolCourseInfo/getNoticeUserList?noticeId=${noticeId}&courseId=${courseId}&classId=${classId}&cpi=${cpi}&ut=${ut}&openc=${openc}&noticeEnc=${noticeEnc}`,
+            window.location.origin,
+          ).toString()
+        }
+
+        const paragraphs = Array.from(node.querySelectorAll('p'))
+        const publishedAt =
+          paragraphs
+            .find((item) => item.textContent?.includes('发布时间'))
+            ?.textContent?.replace(/\s+/g, ' ')
+            .split('：')
+            .pop()
+            ?.trim() ?? null
+        const publisher =
+          paragraphs
+            .find(
+              (item) =>
+                item.textContent?.includes('发布人') ||
+                item.textContent?.includes('发送人'),
+            )
+            ?.textContent?.replace(/\s+/g, ' ')
+            .split('：')
+            .pop()
+            ?.trim() ?? null
+
+        return {
+          noticeId: match?.[2] ?? null,
+          noticeEnc: match?.[1] ?? null,
+          title:
+            titleAnchor?.getAttribute('title')?.trim() ??
+            titleAnchor?.textContent?.trim() ??
+            '',
+          publishedAt,
+          publisher,
+          rawText: (node.textContent || '').replace(/\s+/g, ' ').trim(),
+          detailUrl,
+        }
       })
-
-      const candidates =
-        directChildren.length === 1 &&
-        ['UL', 'OL', 'DIV'].includes(directChildren[0].tagName)
-          ? Array.from(directChildren[0].children)
-          : directChildren
-
-      const result = []
-
-      for (const node of candidates) {
-        const rawText = (node.textContent || '').replace(/\s+/g, ' ').trim()
-        if (!rawText) {
-          continue
-        }
-
-        const anchor = node.querySelector('a[href]')
-        const href = anchor ? anchor.getAttribute('href') : null
-        const detailUrl = href
-          ? new URL(href, window.location.origin).toString()
-          : null
-        const titleAttr = anchor ? anchor.getAttribute('title') || '' : ''
-        const anchorText = anchor ? (anchor.textContent || '').replace(/\s+/g, ' ').trim() : ''
-        const dates =
-          rawText.match(
-            /\d{4}[-/.]\d{1,2}[-/.]\d{1,2}(?:\s+\d{1,2}:\d{2})?/g,
-          ) || []
-        const title =
-          titleAttr.replace(/\s+/g, ' ').trim() ||
-          anchorText ||
-          rawText.split(/\s{2,}/)[0] ||
-          rawText
-
-        if (title && rawText) {
-          result.push({
-            title: title,
-            detailUrl: detailUrl,
-            publishedAt: dates[0] || null,
-            publisher: null,
-            rawText: rawText,
-          })
-        }
-      }
-
-      return result
     })
+
+    const normalizedItems = normalizeNotices(items)
+    const enrichedItems: NoticeSummary[] = []
+
+    for (const item of normalizedItems) {
+      const detail = item.detailUrl
+        ? await collectNoticeDetail(context, item.detailUrl)
+        : null
+
+      enrichedItems.push({
+        ...item,
+        detailText: detail?.detailText ?? null,
+        detailHtml: detail?.detailHtml ?? null,
+        detailCollectedAt: detail?.detailCollectedAt ?? null,
+        attachments: detail?.attachments ?? [],
+      })
+    }
 
     const artifacts = await writePageArtifacts(page, `notice-list-${modules.courseId}`)
     const snapshot: NoticeListSnapshot = {
@@ -109,11 +155,11 @@ export async function collectNoticeList(
       checkedUrl: modules.noticesUrl,
       currentUrl: page.url(),
       pageTitle: await page.title(),
-      itemCount: items.length,
+      itemCount: enrichedItems.length,
       htmlPath: artifacts.htmlPath,
       screenshotPath: artifacts.screenshotPath,
       jsonPath: resolveNoticeListJson(modules.courseId),
-      items: normalizeNotices(items),
+      items: enrichedItems,
     }
 
     await writeJsonFile(snapshot.jsonPath, snapshot)
@@ -121,6 +167,71 @@ export async function collectNoticeList(
   } finally {
     await closeQuietly(context, page)
     await launched?.browser.close().catch(() => {})
+  }
+}
+
+async function collectNoticeDetail(
+  context: BrowserContext,
+  detailUrl: string,
+): Promise<{
+  detailText: string | null
+  detailHtml: string | null
+  detailCollectedAt: string
+  attachments: NoticeAttachment[]
+} | null> {
+  const page = await context.newPage()
+
+  try {
+    await gotoSettled(page, detailUrl)
+    await assertAuthenticatedPage(page, detailUrl)
+    await page.waitForSelector('#contentNotice, body', { timeout: 15_000 })
+
+    return await page.evaluate(() => {
+      const content = document.querySelector('#contentNotice') as HTMLElement | null
+      const detailText = (content?.textContent || '').replace(/\s+/g, ' ').trim() || null
+      const detailHtml = content?.innerHTML?.trim() || null
+      const attachmentNodes = Array.from(
+        document.querySelectorAll(
+          '.noticeAttachment a[href], .oneAttachment a[href], .attachmentHref[href], .img_area a[href]',
+        ),
+      ) as HTMLAnchorElement[]
+
+      const seen = new Set<string>()
+      const attachments = attachmentNodes
+        .map((anchor) => {
+          const href = anchor.getAttribute('href') || ''
+          if (!href || href.startsWith('javascript:')) {
+            return null
+          }
+
+          const url = new URL(href, window.location.origin).toString()
+          if (seen.has(url)) {
+            return null
+          }
+          seen.add(url)
+
+          return {
+            name:
+              (anchor.getAttribute('title') || '').trim() ||
+              (anchor.textContent || '').replace(/\s+/g, ' ').trim() ||
+              url.split('/').pop() ||
+              url,
+            url,
+          }
+        })
+        .filter((item): item is { name: string; url: string } => item !== null)
+
+      return {
+        detailText,
+        detailHtml,
+        detailCollectedAt: new Date().toISOString(),
+        attachments,
+      }
+    })
+  } catch {
+    return null
+  } finally {
+    await page.close().catch(() => {})
   }
 }
 
@@ -144,26 +255,33 @@ function createEmptySnapshot(
   }
 }
 
-function normalizeNotices(items: NoticeSummary[]): NoticeSummary[] {
+function normalizeNotices(items: RawNoticeItem[]): NoticeSummary[] {
   const seen = new Set<string>()
 
-  return items.filter((item) => {
-    item.title = normalizeText(item.title)
-    item.rawText = normalizeText(item.rawText)
-    item.publishedAt = item.publishedAt ? normalizeText(item.publishedAt) : null
-    if (item.detailUrl?.startsWith('javascript:')) {
-      item.detailUrl = null
-    }
+  return items
+    .map((item) => ({
+      noticeId: normalizeText(item.noticeId) || `${normalizeText(item.title)}|${normalizeText(item.publishedAt)}`,
+      noticeEnc: item.noticeEnc ? normalizeText(item.noticeEnc) : null,
+      title: normalizeText(item.title),
+      detailUrl: item.detailUrl?.startsWith('javascript:') ? null : item.detailUrl,
+      publishedAt: item.publishedAt ? normalizeText(item.publishedAt) : null,
+      publisher: item.publisher ? normalizeText(item.publisher) : null,
+      rawText: normalizeText(item.rawText),
+      detailText: null,
+      detailHtml: null,
+      detailCollectedAt: null,
+      attachments: [],
+    }))
+    .filter((item) => {
+      if (!item.title || !item.rawText) {
+        return false
+      }
 
-    if (!item.title || !item.rawText) {
-      return false
-    }
-
-    const key = `${item.title}|${item.publishedAt ?? ''}|${item.detailUrl ?? ''}`
-    if (seen.has(key)) {
-      return false
-    }
-    seen.add(key)
-    return true
-  })
+      const key = `${item.noticeId}|${item.title}|${item.publishedAt ?? ''}`
+      if (seen.has(key)) {
+        return false
+      }
+      seen.add(key)
+      return true
+    })
 }

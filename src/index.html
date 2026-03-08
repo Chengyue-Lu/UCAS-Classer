@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0"
+    />
+    <title>UCAS Classer</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell" id="app-shell">
+      <div class="chrome-stripe"></div>
+
+      <div class="app-shell__frame">
+        <header class="titlebar" data-tauri-drag-region>
+          <div class="titlebar__drag">
+            <div class="titlebar__brand">
+              <div class="brand-frame">
+                <h1 class="brand-title">UCAS Classer</h1>
+              </div>
+            </div>
+          </div>
+
+          <div class="titlebar__actions">
+            <button
+              class="window-button window-button--settings"
+              type="button"
+              data-action="settings"
+              aria-label="设置"
+            >
+              <span>⚙</span>
+            </button>
+            <button
+              class="window-button"
+              type="button"
+              data-action="minimize"
+              aria-label="最小化"
+            >
+              <span></span>
+            </button>
+            <button
+              class="window-button window-button--close"
+              type="button"
+              data-action="close"
+              aria-label="关闭"
+            >
+              <span></span>
+            </button>
+          </div>
+        </header>
+
+        <main class="main-panel">
+          <section class="status-card" aria-live="polite">
+            <div class="status-card__topline">
+              <div>
+                <p class="status-card__eyebrow">Runtime Surface</p>
+                <p class="status-card__headline">运行状态</p>
+              </div>
+              <span class="status-badge" id="runtime-status">UNKNOWN</span>
+            </div>
+
+            <div class="status-metrics">
+              <article class="status-metric">
+                <p class="status-metric__label">上次 Check</p>
+                <p
+                  class="status-metric__value"
+                  id="runtime-check-age"
+                >
+                  从未
+                </p>
+              </article>
+              <article class="status-metric">
+                <p class="status-metric__label">上次 Collect</p>
+                <p
+                  class="status-metric__value"
+                  id="runtime-collect-age"
+                >
+                  从未
+                </p>
+              </article>
+            </div>
+
+            <nav class="action-nav" aria-label="运行时操作">
+              <div class="action-nav__items" role="toolbar">
+                <button
+                  class="action-button"
+                  type="button"
+                  data-runtime-action="check"
+                  data-active="false"
+                >
+                  <span class="action-button__hover" aria-hidden="true"></span>
+                  <span class="action-button__label-stack">
+                    <span class="action-button__label">Check</span>
+                    <span
+                      class="action-button__label action-button__label--hover"
+                      aria-hidden="true"
+                    >
+                      Check
+                    </span>
+                  </span>
+                </button>
+                <button
+                  class="action-button"
+                  type="button"
+                  data-runtime-action="collect"
+                  data-active="false"
+                >
+                  <span class="action-button__hover" aria-hidden="true"></span>
+                  <span class="action-button__label-stack">
+                    <span class="action-button__label">Collect</span>
+                    <span
+                      class="action-button__label action-button__label--hover"
+                      aria-hidden="true"
+                    >
+                      Collect
+                    </span>
+                  </span>
+                </button>
+                <button
+                  class="action-button"
+                  type="button"
+                  data-runtime-action="login"
+                  data-active="false"
+                >
+                  <span class="action-button__hover" aria-hidden="true"></span>
+                  <span class="action-button__label-stack">
+                    <span class="action-button__label">Login</span>
+                    <span
+                      class="action-button__label action-button__label--hover"
+                      aria-hidden="true"
+                    >
+                      Login
+                    </span>
+                  </span>
+                </button>
+              </div>
+            </nav>
+          </section>
+
+          <section class="courses-panel">
+            <div class="section-heading">
+              <p class="section-heading__label">Pinned Courses</p>
+              <p class="section-heading__count" id="course-count">0 courses</p>
+            </div>
+
+            <div class="course-list" id="course-list"></div>
+
+            <div class="empty-state" id="empty-state" hidden>
+              <p class="empty-state__title">当前没有已导入课程</p>
+              <p class="empty-state__text">先执行一次 Collect，导库完成后这里会自动刷新。</p>
+            </div>
+          </section>
+        </main>
+      </div>
+
+      <div class="modal-overlay" id="detail-modal" hidden>
+        <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+          <div class="modal-panel__header">
+            <div class="modal-panel__heading">
+              <p class="modal-panel__eyebrow" id="modal-kind">详情</p>
+              <h2 class="modal-panel__title" id="modal-title">详情</h2>
+            </div>
+            <button
+              class="modal-close"
+              type="button"
+              id="modal-close"
+              aria-label="关闭弹窗"
+            >
+              <span></span>
+            </button>
+          </div>
+
+          <div class="modal-panel__meta" id="modal-meta"></div>
+          <div class="modal-panel__actions" id="modal-actions"></div>
+          <p class="modal-panel__feedback" id="modal-feedback" hidden></p>
+          <div class="modal-panel__body" id="modal-body"></div>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

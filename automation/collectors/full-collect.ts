@@ -45,7 +45,7 @@ export async function runFullCollect(options?: {
           courseId: course.courseId,
           courseName: course.name,
           ok: true,
-          materialCount: materials.itemCount,
+          materialCount: materials.fileCount,
           noticeCount: notices.itemCount,
           assignmentCount: assignments.itemCount,
         }

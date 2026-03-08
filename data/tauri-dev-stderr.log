@@ -1,0 +1,5 @@
+     Running DevCommand (`cargo  run --no-default-features --color always --`)
+[1m[92m   Compiling[0m ucas-classer v0.1.0 (D:\lcy\ucasclasser-develop\src-tauri)
+[1m[96m    Building[0m [=======================> ] 395/398: ucas-cl…[1m[96m    Building[0m [=======================> ] 396/398: ucas-cl…[1m[96m    Building[0m [=======================> ] 397/398: ucas-cl…                                                            [1m[92m    Finished[0m `dev` profile [unoptimized + debuginfo] target(s) in 2.84s
+[1m[92m     Running[0m `target\debug\ucas-classer.exe`
+[1m[91merror[0m: process didn't exit successfully: `target\debug\ucas-classer.exe` (exit code: 0xffffffff)

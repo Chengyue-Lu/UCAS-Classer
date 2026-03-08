@@ -20,6 +20,10 @@ pub fn data_dir() -> PathBuf {
     project_root().join("data")
 }
 
+pub fn app_settings_file() -> PathBuf {
+    data_dir().join("app-settings.json")
+}
+
 pub fn cache_dir() -> PathBuf {
     data_dir().join("cache")
 }

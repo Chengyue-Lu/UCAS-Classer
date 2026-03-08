@@ -47,8 +47,15 @@ export type CourseModuleUrls = {
   jsonPath: string
 }
 
-export type MaterialSummary = {
-  dataId: string
+export type MaterialNodeSummary = {
+  nodeId: string
+  parentNodeId: string | null
+  nodeType: 'file' | 'folder' | 'link' | 'unknown'
+  itemIndex: number
+  path: string
+  depth: number
+  dataId: string | null
+  folderId: string | null
   name: string
   type: string | null
   objectId: string | null
@@ -57,6 +64,7 @@ export type MaterialSummary = {
   createdAt: string | null
   downloadUrl: string | null
   readUrl: string | null
+  openUrl: string | null
   source: string | null
 }
 
@@ -69,18 +77,31 @@ export type MaterialListSnapshot = {
   currentUrl: string
   pageTitle: string
   itemCount: number
+  fileCount: number
+  folderCount: number
   htmlPath: string
   screenshotPath: string
   jsonPath: string
-  items: MaterialSummary[]
+  items: MaterialNodeSummary[]
+}
+
+export type NoticeAttachment = {
+  name: string
+  url: string
 }
 
 export type NoticeSummary = {
+  noticeId: string
+  noticeEnc: string | null
   title: string
   detailUrl: string | null
   publishedAt: string | null
   publisher: string | null
   rawText: string
+  detailText: string | null
+  detailHtml: string | null
+  detailCollectedAt: string | null
+  attachments: NoticeAttachment[]
 }
 
 export type NoticeListSnapshot = {

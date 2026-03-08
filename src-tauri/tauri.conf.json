@@ -12,8 +12,12 @@
     "windows": [
       {
         "title": "UCAS Classer",
-        "width": 1200,
-        "height": 800
+        "width": 480,
+        "height": 720,
+        "decorations": false,
+        "resizable": true,
+        "minWidth": 480,
+        "minHeight": 720
       }
     ]
   },

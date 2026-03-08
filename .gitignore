@@ -18,6 +18,7 @@ auth.local.json
 
 .DS_Store
 Thumbs.db
+/ucasclasser-package/
 
 # Playwright
 /test-results/
@@ -25,3 +26,6 @@ Thumbs.db
 /blob-report/
 /playwright/.cache/
 /playwright/.auth/
+
+temp.md
+temp1.md

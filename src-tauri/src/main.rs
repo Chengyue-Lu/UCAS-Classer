@@ -1,4 +1,11 @@
-use tauri::State;
+use std::process::Command;
+
+use tauri::{State, Window};
+use ucas_classer::app_data::{load_dashboard_data as load_dashboard_data_impl, DashboardData};
+use ucas_classer::app_settings::{
+    load_app_settings as load_app_settings_impl, save_app_settings as save_app_settings_impl,
+    AppSettings,
+};
 use ucas_classer::auth_runtime::{
     acknowledge_hourly_refresh_due as acknowledge_hourly_refresh_due_impl,
     clear_db_import_due as clear_db_import_due_impl,
@@ -17,6 +24,24 @@ use ucas_classer::auth_runtime::{
     stop_runtime_scheduler as stop_runtime_scheduler_impl,
     RuntimeService, RuntimeSnapshot, SharedRuntimeService,
 };
+use ucas_classer::downloads::{
+    download_protected_file as download_protected_file_impl, ProtectedDownloadResult,
+};
+
+#[tauri::command]
+fn load_dashboard_data() -> Result<DashboardData, String> {
+    load_dashboard_data_impl()
+}
+
+#[tauri::command]
+fn load_app_settings() -> Result<AppSettings, String> {
+    load_app_settings_impl()
+}
+
+#[tauri::command]
+fn save_app_settings(settings: AppSettings) -> Result<AppSettings, String> {
+    save_app_settings_impl(settings)
+}
 
 #[tauri::command]
 async fn get_runtime_status(
@@ -123,10 +148,50 @@ async fn run_db_import(
     run_db_import_impl(runtime).await
 }
 
+#[tauri::command]
+fn window_minimize(window: Window) -> Result<(), String> {
+    window.minimize().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn window_close(window: Window) -> Result<(), String> {
+    window.close().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn open_external_url(url: String) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("cmd")
+            .args(["/C", "start", "", &url])
+            .spawn()
+            .map_err(|error| format!("failed to open external url: {error}"))?;
+        return Ok(());
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = url;
+        Err("open_external_url is only implemented on Windows right now".to_string())
+    }
+}
+
+#[tauri::command]
+fn download_protected_file(
+    url: String,
+    suggested_name: Option<String>,
+    referer: Option<String>,
+) -> Result<ProtectedDownloadResult, String> {
+    download_protected_file_impl(url, suggested_name, referer)
+}
+
 fn main() {
     tauri::Builder::default()
         .manage(RuntimeService::new())
         .invoke_handler(tauri::generate_handler![
+            load_dashboard_data,
+            load_app_settings,
+            save_app_settings,
             get_runtime_status,
             start_runtime_scheduler,
             stop_runtime_scheduler,
@@ -142,6 +207,10 @@ fn main() {
             clear_db_import_due,
             run_full_collect,
             run_db_import,
+            window_minimize,
+            window_close,
+            open_external_url,
+            download_protected_file,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run tauri application");
