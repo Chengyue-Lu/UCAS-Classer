@@ -7,6 +7,7 @@ import { summarizeContext, writeArtifacts } from './utils.js'
 function parseArgs(argv: string[]) {
   return {
     headed: argv.includes('--headed'),
+    refreshStorageOnSuccess: argv.includes('--refresh-storage-on-success'),
   }
 }
 
@@ -33,12 +34,18 @@ async function main() {
     await page.waitForTimeout(3000)
 
     const summary = await summarizeContext(context, browserChannel, courseListUrl)
+
+    if (summary.authenticated && options.refreshStorageOnSuccess) {
+      await context.storageState({ path: authPaths.storageStateFile })
+    }
+
     const artifacts = await writeArtifacts(page, 'check-auth')
 
     console.log(
       JSON.stringify(
         {
           storageStateFile: authPaths.storageStateFile,
+          refreshStorageOnSuccess: options.refreshStorageOnSuccess,
           ...summary,
           ...artifacts,
         },

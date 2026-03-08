@@ -18,6 +18,8 @@
     "runtime:check": "cargo run --quiet --manifest-path src-tauri/Cargo.toml --bin runtime_cli -- check",
     "runtime:clear": "cargo run --quiet --manifest-path src-tauri/Cargo.toml --bin runtime_cli -- clear",
     "runtime:login": "cargo run --quiet --manifest-path src-tauri/Cargo.toml --bin runtime_cli -- login",
+    "runtime:collect": "cargo run --quiet --manifest-path src-tauri/Cargo.toml --bin runtime_cli -- collect",
+    "runtime:import": "cargo run --quiet --manifest-path src-tauri/Cargo.toml --bin runtime_cli -- import",
     "repro:auth:reset": "tsx experiments/auth-storage-repro/reset.ts",
     "repro:auth:login": "tsx experiments/auth-storage-repro/login-and-save.ts",
     "repro:auth:check": "tsx experiments/auth-storage-repro/check-auth.ts",

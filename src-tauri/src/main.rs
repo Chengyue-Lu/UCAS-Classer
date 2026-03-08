@@ -1,7 +1,14 @@
 use tauri::State;
 use ucas_classer::auth_runtime::{
     acknowledge_hourly_refresh_due as acknowledge_hourly_refresh_due_impl,
+    clear_db_import_due as clear_db_import_due_impl,
+    clear_collect_refresh_due as clear_collect_refresh_due_impl,
     get_runtime_status as get_runtime_status_impl,
+    mark_db_import_due as mark_db_import_due_impl,
+    mark_collect_refresh_due as mark_collect_refresh_due_impl,
+    mark_hourly_refresh_due as mark_hourly_refresh_due_impl,
+    run_db_import as run_db_import_impl,
+    run_full_collect as run_full_collect_impl,
     run_auth_check as run_auth_check_impl,
     run_auth_clear as run_auth_clear_impl,
     run_explicit_auth_check as run_explicit_auth_check_impl,
@@ -67,6 +74,55 @@ async fn acknowledge_hourly_refresh_due(
     acknowledge_hourly_refresh_due_impl(runtime).await
 }
 
+#[tauri::command]
+async fn mark_hourly_refresh_due(
+    runtime: State<'_, SharedRuntimeService>,
+) -> Result<RuntimeSnapshot, String> {
+    mark_hourly_refresh_due_impl(runtime).await
+}
+
+#[tauri::command]
+async fn mark_collect_refresh_due(
+    runtime: State<'_, SharedRuntimeService>,
+) -> Result<RuntimeSnapshot, String> {
+    mark_collect_refresh_due_impl(runtime).await
+}
+
+#[tauri::command]
+async fn clear_collect_refresh_due(
+    runtime: State<'_, SharedRuntimeService>,
+) -> Result<RuntimeSnapshot, String> {
+    clear_collect_refresh_due_impl(runtime).await
+}
+
+#[tauri::command]
+async fn mark_db_import_due(
+    runtime: State<'_, SharedRuntimeService>,
+) -> Result<RuntimeSnapshot, String> {
+    mark_db_import_due_impl(runtime).await
+}
+
+#[tauri::command]
+async fn clear_db_import_due(
+    runtime: State<'_, SharedRuntimeService>,
+) -> Result<RuntimeSnapshot, String> {
+    clear_db_import_due_impl(runtime).await
+}
+
+#[tauri::command]
+async fn run_full_collect(
+    runtime: State<'_, SharedRuntimeService>,
+) -> Result<RuntimeSnapshot, String> {
+    run_full_collect_impl(runtime).await
+}
+
+#[tauri::command]
+async fn run_db_import(
+    runtime: State<'_, SharedRuntimeService>,
+) -> Result<RuntimeSnapshot, String> {
+    run_db_import_impl(runtime).await
+}
+
 fn main() {
     tauri::Builder::default()
         .manage(RuntimeService::new())
@@ -79,6 +135,13 @@ fn main() {
             run_interrupt_login,
             run_auth_clear,
             acknowledge_hourly_refresh_due,
+            mark_hourly_refresh_due,
+            mark_collect_refresh_due,
+            clear_collect_refresh_due,
+            mark_db_import_due,
+            clear_db_import_due,
+            run_full_collect,
+            run_db_import,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run tauri application");

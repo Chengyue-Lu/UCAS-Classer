@@ -1,4 +1,5 @@
 use std::time::Duration;
+use std::{io, sync::mpsc, thread};
 
 use tokio::signal::ctrl_c;
 use tokio::time::sleep;
@@ -38,18 +39,52 @@ async fn run() -> Result<(), String> {
             print_snapshot(&snapshot);
             wait_for_login_to_finish(runtime).await
         }
+        "collect" => {
+            println!("[{}] COLLECT_STARTING", format_now());
+            let previous_import_finished_at_ms = runtime.snapshot().last_db_import_finished_at_ms;
+            let snapshot = runtime.run_full_collect().await?;
+            print_snapshot(&snapshot);
+            if snapshot.last_collect_ok == Some(true) {
+                println!("[{}] COLLECT_REFRESHED", format_now());
+            }
+            wait_for_db_import_to_settle(runtime, previous_import_finished_at_ms).await
+        }
+        "import" => {
+            println!("[{}] DB_IMPORT_STARTING", format_now());
+            let snapshot = runtime.run_db_import().await?;
+            print_snapshot(&snapshot);
+            if snapshot.last_db_import_ok == Some(true) {
+                println!("[{}] DB_IMPORTED", format_now());
+            }
+            Ok(())
+        }
         other => Err(format!(
-            "unknown command `{other}`. Use: watch | status | check | clear | login"
+            "unknown command `{other}`. Use: watch | status | check | clear | login | collect | import"
         )),
     }
 }
 
 async fn watch_runtime(runtime: ucas_classer::auth_runtime::SharedRuntimeService) -> Result<(), String> {
     let snapshot = runtime.start_scheduler();
-    println!("runtime scheduler started; press Ctrl+C to stop");
+    println!("runtime scheduler started; Ctrl+C to stop; r + Enter for cookie refresh due; c + Enter for collect refresh due; g + Enter to run collect; i + Enter to run db import");
     print_snapshot(&snapshot);
 
     let mut last_snapshot = String::new();
+    let mut last_cookie_refresh_at_ms = snapshot.last_cookie_refresh_at_ms;
+    let mut last_collect_finished_at_ms = snapshot.last_collect_finished_at_ms;
+    let mut last_db_import_finished_at_ms = snapshot.last_db_import_finished_at_ms;
+    let (input_tx, input_rx) = mpsc::channel::<String>();
+
+    thread::spawn(move || loop {
+        let mut line = String::new();
+        if io::stdin().read_line(&mut line).is_err() {
+            break;
+        }
+
+        if input_tx.send(line).is_err() {
+            break;
+        }
+    });
 
     loop {
         tokio::select! {
@@ -60,8 +95,58 @@ async fn watch_runtime(runtime: ucas_classer::auth_runtime::SharedRuntimeService
                 return Ok(());
             }
             _ = sleep(Duration::from_secs(2)) => {
+                while let Ok(command) = input_rx.try_recv() {
+                    let normalized = command.trim().to_lowercase();
+                    if normalized == "r" || normalized == "refresh" {
+                        let snapshot = runtime.mark_hourly_refresh_due();
+                        println!("[{}] COOKIE_REFRESH_DUE", format_now());
+                        print_snapshot(&snapshot);
+                    } else if normalized == "c" || normalized == "collect" {
+                        let snapshot = runtime.mark_collect_refresh_due();
+                        println!("[{}] COLLECT_REFRESH_DUE", format_now());
+                        print_snapshot(&snapshot);
+                    } else if normalized == "g" || normalized == "go" {
+                        println!("[{}] COLLECT_STARTING", format_now());
+                        let runtime_clone = runtime.clone();
+                        tokio::spawn(async move {
+                            let _ = runtime_clone.run_full_collect().await;
+                        });
+                    } else if normalized == "i" || normalized == "import" {
+                        println!("[{}] DB_IMPORT_STARTING", format_now());
+                        let runtime_clone = runtime.clone();
+                        tokio::spawn(async move {
+                            let _ = runtime_clone.run_db_import().await;
+                        });
+                    }
+                }
+
                 let snapshot = runtime.snapshot();
                 let rendered = render_snapshot(&snapshot);
+
+                if snapshot.last_cookie_refresh_at_ms != last_cookie_refresh_at_ms {
+                    last_cookie_refresh_at_ms = snapshot.last_cookie_refresh_at_ms;
+                    if last_cookie_refresh_at_ms.is_some() {
+                        println!("[{}] COOKIE_REFRESHED", format_now());
+                    }
+                }
+
+                if snapshot.last_collect_finished_at_ms != last_collect_finished_at_ms {
+                    last_collect_finished_at_ms = snapshot.last_collect_finished_at_ms;
+                    if snapshot.last_collect_ok == Some(true) {
+                        println!("[{}] COLLECT_REFRESHED", format_now());
+                    } else if snapshot.last_collect_ok == Some(false) {
+                        println!("[{}] COLLECT_FAILED", format_now());
+                    }
+                }
+
+                if snapshot.last_db_import_finished_at_ms != last_db_import_finished_at_ms {
+                    last_db_import_finished_at_ms = snapshot.last_db_import_finished_at_ms;
+                    if snapshot.last_db_import_ok == Some(true) {
+                        println!("[{}] DB_IMPORTED", format_now());
+                    } else if snapshot.last_db_import_ok == Some(false) {
+                        println!("[{}] DB_IMPORT_FAILED", format_now());
+                    }
+                }
 
                 if rendered != last_snapshot {
                     println!("{rendered}");
@@ -87,6 +172,32 @@ async fn wait_for_login_to_finish(
     }
 }
 
+async fn wait_for_db_import_to_settle(
+    runtime: ucas_classer::auth_runtime::SharedRuntimeService,
+    previous_import_finished_at_ms: Option<u64>,
+) -> Result<(), String> {
+    for _ in 0..120 {
+        let snapshot = runtime.snapshot();
+        print_snapshot(&snapshot);
+
+        let import_completed = snapshot.last_db_import_finished_at_ms != previous_import_finished_at_ms;
+        if !snapshot.db_import_running && (!snapshot.db_import_due || import_completed) {
+            if import_completed {
+                if snapshot.last_db_import_ok == Some(true) {
+                    println!("[{}] DB_IMPORTED", format_now());
+                } else if snapshot.last_db_import_ok == Some(false) {
+                    println!("[{}] DB_IMPORT_FAILED", format_now());
+                }
+            }
+            return Ok(());
+        }
+
+        sleep(Duration::from_secs(1)).await;
+    }
+
+    Err("timed out while waiting for database import to settle".to_string())
+}
+
 fn print_snapshot(snapshot: &RuntimeSnapshot) {
     println!("{}", render_snapshot(snapshot));
 }
@@ -96,6 +207,14 @@ fn render_snapshot(snapshot: &RuntimeSnapshot) -> String {
 }
 
 fn summarize_status(snapshot: &RuntimeSnapshot) -> String {
+    if snapshot.collect_refresh_running {
+        return "COLLECTING".to_string();
+    }
+
+    if snapshot.db_import_running {
+        return "IMPORTING".to_string();
+    }
+
     if snapshot.login_running {
         return "LOGIN_REQUIRED".to_string();
     }
