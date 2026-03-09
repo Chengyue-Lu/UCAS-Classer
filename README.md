@@ -2,8 +2,8 @@
 
 <div align="center">
   <h2>
-    <img src=".\src-tauri\icons\UCAS Classer.square.png" alt="UCAS Classer Logo" width="40" style="vertical-align: middle; margin-right: 15px;">
-    <span style="font-family: 'Helvetica Neue', Helvetica, 'PingFang SC', 'Microsoft YaHei', sans-serif; font-weight: 800; font-size: 36px; vertical-align: middle;">UCAS Classer</span>
+    <img src=".\src-tauri\icons\UCAS Classer.square.png" alt="UCAS Classer Logo" width="30" style="vertical-align: middle; margin-right: 15px;">
+    <span style="font-family: 'Helvetica Neue', Helvetica, 'PingFang SC', 'Microsoft YaHei', sans-serif; font-weight: 800; font-size: 40px; vertical-align: middle;">UCAS Classer</span>
   </h2>
 
   <p><strong>一个围绕 UCAS 课程平台构建的轻量桌面助手。</strong></p>
