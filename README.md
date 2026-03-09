@@ -2,7 +2,7 @@
 
 <div align="center">
   <h2>
-    <img src="./ucasclasser-package/UCAS%20Classer.png" alt="UCAS Classer Logo" width="120" style="vertical-align: middle; margin-right: 15px;">
+    <img src=".\src-tauri\icons\UCAS Classer.square.png" alt="UCAS Classer Logo" width="120" style="vertical-align: middle; margin-right: 15px;">
     <span style="font-family: 'Helvetica Neue', Helvetica, 'PingFang SC', 'Microsoft YaHei', sans-serif; font-weight: 800; font-size: 36px; vertical-align: middle;">UCAS Classer</span>
   </h2>
 
