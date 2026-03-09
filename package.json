@@ -25,9 +25,6 @@
     "runtime:import": "cargo run --quiet --manifest-path src-tauri/Cargo.toml --bin runtime_cli -- import",
     "tauri:dev": "npx tauri dev",
     "tauri:build": "npx tauri build",
-    "repro:auth:reset": "tsx experiments/auth-storage-repro/reset.ts",
-    "repro:auth:login": "tsx experiments/auth-storage-repro/login-and-save.ts",
-    "repro:auth:check": "tsx experiments/auth-storage-repro/check-auth.ts",
     "playwright:install": "playwright install"
   },
   "devDependencies": {

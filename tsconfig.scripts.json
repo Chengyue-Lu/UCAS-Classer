@@ -12,7 +12,6 @@
   },
   "include": [
     "automation/**/*.ts",
-    "experiments/**/*.ts",
     "shared/**/*.ts"
   ]
 }
