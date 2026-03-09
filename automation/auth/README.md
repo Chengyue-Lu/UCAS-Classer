@@ -12,6 +12,7 @@
    - 不再启动浏览器
 
 可用命令：
+
 ```powershell
 npm run auth:reset
 npm run auth:login
@@ -20,6 +21,7 @@ npm run webcheck
 ```
 
 补充说明：
+
 - `auth:login` 和 `auth:open` 现在都走 SEP 版本的新登录链。
 - 老的浏览器登录脚本仍保留，可通过 `npm run auth:login:legacy` 手动回退测试。
 - `auth:check` 现在是 API 版检查。

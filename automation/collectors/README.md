@@ -10,6 +10,7 @@ npm run collect:all
 ```
 
 Outputs:
+
 - `data/cache/course-list.json`
 - `data/cache/course-list.html`
 - `data/cache/course-list.png`
