@@ -5,15 +5,17 @@ use serde::{Deserialize, Serialize};
 use crate::paths::{app_settings_file, data_dir, project_root};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(default, rename_all = "camelCase")]
 pub struct AppSettings {
     pub download_dir: String,
+    pub course_scope: String,
 }
 
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
             download_dir: project_root().display().to_string(),
+            course_scope: "all".to_string(),
         }
     }
 }
@@ -41,6 +43,12 @@ pub fn save_app_settings(mut settings: AppSettings) -> Result<AppSettings, Strin
         project_root().display().to_string()
     } else {
         trimmed_download_dir.to_string()
+    };
+
+    settings.course_scope = match settings.course_scope.trim() {
+        "current" => "current".to_string(),
+        "past" => "past".to_string(),
+        _ => "all".to_string(),
     };
 
     fs::create_dir_all(data_dir())

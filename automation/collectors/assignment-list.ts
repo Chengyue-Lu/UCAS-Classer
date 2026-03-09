@@ -1,7 +1,7 @@
 import type { Browser } from '@playwright/test'
 import { launchBrowser } from '../auth/browser.js'
-import { assertAuthenticatedPage, ensureStorageStateFile } from './session.js'
 import { resolveAssignmentListJson } from './paths.js'
+import { assertAuthenticatedPage, ensureStorageStateFile } from './session.js'
 import type {
   AssignmentListSnapshot,
   AssignmentSummary,
@@ -47,19 +47,31 @@ export async function collectAssignmentList(
 
     const items = await page.evaluate(function () {
       const bodyText = (document.body.textContent || '').replace(/\s+/g, ' ').trim()
-      if (bodyText.includes('请输入验证码') || bodyText.includes('看不清')) {
+      const hasCaptcha =
+        bodyText.includes('请输入验证码') ||
+        bodyText.includes('看不清') ||
+        Boolean(
+          document.querySelector(
+            'input[name*="captcha"], input[id*="captcha"], img[src*="captcha"], #numVerCode, .yzmImg',
+          ),
+        )
+
+      if (hasCaptcha) {
         return []
       }
 
       const list = document.querySelector('#CyList')
-      if (!list) {
+      const nodes = list
+        ? Array.from(list.querySelectorAll(':scope > li'))
+        : Array.from(document.querySelectorAll('.ulDiv ul > li.lookLi, .ulDiv ul > li'))
+
+      if (nodes.length === 0) {
         return []
       }
 
       const result = []
-      const items = Array.from(list.querySelectorAll(':scope > li'))
 
-      for (const item of items) {
+      for (const item of nodes) {
         const rawText = (item.textContent || '').replace(/\s+/g, ' ').trim()
         if (!rawText) {
           continue
@@ -70,23 +82,33 @@ export async function collectAssignmentList(
           const href = link.getAttribute('href') || ''
           return href && !href.startsWith('javascript:')
         })
-        const titleNode = item.querySelector('h3 a, .titTxt a, .titTxt, h3, p')
+        const titleAnchor = item.querySelector('.titTxt a[title], .titTxt a, h3 a')
+        const titleNode = item.querySelector('.titTxt p, h3, .titTxt, p')
+        const statusNode = item.querySelector('.titTxt strong, .status, .state')
         const dates =
           rawText.match(
             /\d{4}[-/.]\d{1,2}[-/.]\d{1,2}(?:\s+\d{1,2}:\d{2})?/g,
           ) || []
-        const titleText = titleNode
-          ? (titleNode.textContent || '').replace(/\s+/g, ' ').trim()
-          : ''
+        const titleText = (
+          titleAnchor?.getAttribute('title') ||
+          titleAnchor?.textContent ||
+          titleNode?.textContent ||
+          ''
+        )
+          .replace(/\s+/g, ' ')
+          .trim()
         const href = detailLink ? detailLink.getAttribute('href') : null
+        const statusText = statusNode
+          ? (statusNode.textContent || '').replace(/\s+/g, ' ').trim()
+          : null
 
         result.push({
           title: titleText || rawText.split(/\s{2,}/)[0] || rawText,
           workUrl: href ? new URL(href, window.location.origin).toString() : null,
-          status: null,
+          status: statusText,
           startTime: dates[0] || null,
           endTime: dates[1] || null,
-          rawText: rawText,
+          rawText,
         })
       }
 
@@ -143,6 +165,7 @@ function normalizeAssignments(items: AssignmentSummary[]): AssignmentSummary[] {
   return items.filter((item) => {
     item.title = normalizeText(item.title)
     item.rawText = normalizeText(item.rawText)
+    item.status = item.status ? normalizeText(item.status) : null
     item.startTime = item.startTime ? normalizeText(item.startTime) : null
     item.endTime = item.endTime ? normalizeText(item.endTime) : null
 

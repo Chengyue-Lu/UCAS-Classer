@@ -53,6 +53,7 @@ struct CourseRecord {
     source: Option<String>,
     kcenc: Option<String>,
     clazzenc: Option<String>,
+    term_category: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -356,6 +357,7 @@ fn init_schema(connection: &Connection) -> Result<(), String> {
                 source TEXT,
                 kcenc TEXT,
                 clazzenc TEXT,
+                term_category TEXT,
                 collected_at TEXT NOT NULL
             );
 
@@ -447,7 +449,16 @@ fn init_schema(connection: &Connection) -> Result<(), String> {
             );
             ",
         )
-        .map_err(|error| format!("failed to initialize database schema: {error}"))
+        .map_err(|error| format!("failed to initialize database schema: {error}"))?;
+
+    ensure_column(
+        connection,
+        "courses",
+        "term_category",
+        "ALTER TABLE courses ADD COLUMN term_category TEXT",
+    )?;
+
+    Ok(())
 }
 
 fn clear_tables(transaction: &Transaction<'_>) -> Result<(), String> {
@@ -485,8 +496,9 @@ fn insert_course(
                 source,
                 kcenc,
                 clazzenc,
+                term_category,
                 collected_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
             params![
                 course.course_id,
                 course.clazz_id,
@@ -500,6 +512,7 @@ fn insert_course(
                 course.source,
                 course.kcenc,
                 course.clazzenc,
+                course.term_category,
                 collected_at,
             ],
         )
@@ -767,6 +780,44 @@ fn read_optional_json<T: for<'de> Deserialize<'de>>(path: &PathBuf) -> Result<Op
     }
 
     read_json_file(path).map(Some)
+}
+
+fn column_exists(connection: &Connection, table_name: &str, column_name: &str) -> Result<bool, String> {
+    let pragma = format!("PRAGMA table_info({table_name})");
+    let mut statement = connection
+        .prepare(&pragma)
+        .map_err(|error| format!("failed to prepare table info query for `{table_name}`: {error}"))?;
+
+    let rows = statement
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|error| format!("failed to query table info for `{table_name}`: {error}"))?;
+
+    for row in rows {
+        let name =
+            row.map_err(|error| format!("failed to read table info for `{table_name}`: {error}"))?;
+        if name == column_name {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
+}
+
+fn ensure_column(
+    connection: &Connection,
+    table_name: &str,
+    column_name: &str,
+    alter_sql: &str,
+) -> Result<(), String> {
+    if column_exists(connection, table_name, column_name)? {
+        return Ok(());
+    }
+
+    connection
+        .execute(alter_sql, [])
+        .map_err(|error| format!("failed to add column `{column_name}` to `{table_name}`: {error}"))?;
+
+    Ok(())
 }
 
 fn now_ms() -> u64 {

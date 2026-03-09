@@ -25,6 +25,7 @@ const state = {
   },
   settings: {
     downloadDir: '',
+    courseScope: 'all',
   },
   activeAction: null,
   modalOpen: false,
@@ -420,13 +421,28 @@ function refreshTitleMarquee(card) {
 function renderCourses() {
   courseList.replaceChildren()
 
-  const courses = state.dashboard.courses ?? []
+  const courses = getScopedCourses()
   courseCount.textContent = `${courses.length} courses`
   emptyState.hidden = courses.length > 0
 
   courses.forEach((course) => {
     courseList.append(createCourseCard(course))
   })
+}
+
+function getScopedCourses() {
+  const courses = state.dashboard.courses ?? []
+  const scope = state.settings.courseScope || 'all'
+
+  if (scope === 'current') {
+    return courses.filter((course) => course.termCategory === 'current')
+  }
+
+  if (scope === 'past') {
+    return courses.filter((course) => course.termCategory === 'past')
+  }
+
+  return courses
 }
 
 function createDetailChip(label, value) {
@@ -697,6 +713,14 @@ function openSettingsModal(feedbackMessage = '') {
   modalTitle.textContent = '应用设置'
   modalMeta.append(
     createDetailChip('当前下载目录', state.settings.downloadDir || '未设置'),
+    createDetailChip(
+      '课程范围',
+      state.settings.courseScope === 'current'
+        ? '当前学期'
+        : state.settings.courseScope === 'past'
+          ? '以前学期'
+          : '全部',
+    ),
   )
 
   const settingsForm = document.createElement('div')
@@ -706,7 +730,43 @@ function openSettingsModal(feedbackMessage = '') {
     fieldName: 'downloadDir',
     placeholder: '例如: D:\\Downloads\\UCAS Classer',
   })
-  settingsForm.append(downloadField.field)
+  const scopeField = document.createElement('div')
+  scopeField.className = 'settings-field'
+  scopeField.append(
+    Object.assign(document.createElement('span'), {
+      className: 'settings-field__label',
+      textContent: '课程范围',
+    }),
+  )
+
+  const scopeToggle = document.createElement('div')
+  scopeToggle.className = 'settings-scope-toggle'
+  const scopeOptions = [
+    { value: 'all', label: '全部' },
+    { value: 'current', label: '当前学期' },
+    { value: 'past', label: '以前学期' },
+  ]
+  let selectedScope = state.settings.courseScope || 'all'
+
+  const renderScopeButtons = () => {
+    scopeToggle.replaceChildren()
+    scopeOptions.forEach((option) => {
+      const button = document.createElement('button')
+      button.className = 'settings-scope-toggle__button'
+      button.type = 'button'
+      button.dataset.active = String(selectedScope === option.value)
+      button.textContent = option.label
+      button.addEventListener('click', () => {
+        selectedScope = option.value
+        renderScopeButtons()
+      })
+      scopeToggle.append(button)
+    })
+  }
+
+  renderScopeButtons()
+  scopeField.append(scopeToggle)
+  settingsForm.append(downloadField.field, scopeField)
   modalBody.append(settingsForm)
 
   modalActions.append(
@@ -716,6 +776,7 @@ function openSettingsModal(feedbackMessage = '') {
         const nextSettings = {
           ...state.settings,
           downloadDir: downloadField.control.value.trim(),
+          courseScope: selectedScope,
         }
 
         try {
@@ -731,7 +792,16 @@ function openSettingsModal(feedbackMessage = '') {
           state.settings = saved
           modalMeta.replaceChildren(
             createDetailChip('当前下载目录', state.settings.downloadDir || '未设置'),
+            createDetailChip(
+              '课程范围',
+              state.settings.courseScope === 'current'
+                ? '当前学期'
+                : state.settings.courseScope === 'past'
+                  ? '以前学期'
+                  : '全部',
+            ),
           )
+          renderCourses()
           setModalFeedback('设置已保存。', 'success')
         } catch (error) {
           setModalFeedback(String(error), 'error')

@@ -11,6 +11,14 @@ export type CourseSummary = {
   source: string | null
   kcenc: string | null
   clazzenc: string | null
+  termCategory?: 'current' | 'past' | null
+}
+
+export type SemesterOptionSummary = {
+  value: string
+  semesterNum: string | null
+  label: string
+  selected: boolean
 }
 
 export type CourseListSnapshot = {
@@ -25,6 +33,14 @@ export type CourseListSnapshot = {
   screenshotPath: string
   jsonPath: string
   courses: CourseSummary[]
+  currentSectionId?: string | null
+  currentSemesterNum?: string | null
+  currentSemesterLabel?: string | null
+  semesterOptions?: SemesterOptionSummary[]
+  currentCourses?: CourseSummary[]
+  pastCourses?: CourseSummary[]
+  currentTermCourseCount?: number
+  pastTermCourseCount?: number
 }
 
 export type CourseModuleUrls = {

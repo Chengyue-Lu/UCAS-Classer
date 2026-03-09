@@ -17,6 +17,7 @@ pub struct DashboardData {
 pub struct DashboardCourse {
     pub course_id: String,
     pub course_name: String,
+    pub term_category: Option<String>,
     pub teacher: Option<String>,
     pub materials_url: Option<String>,
     pub notices_url: Option<String>,
@@ -117,7 +118,8 @@ pub fn load_dashboard_data() -> Result<DashboardData, String> {
             SELECT
               course_id,
               name,
-              teacher
+              teacher,
+              term_category
             FROM courses
             ORDER BY course_id ASC
             ",
@@ -130,6 +132,7 @@ pub fn load_dashboard_data() -> Result<DashboardData, String> {
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,
                 row.get::<_, Option<String>>(2)?,
+                row.get::<_, Option<String>>(3)?,
             ))
         })
         .map_err(|error| format!("failed to query dashboard courses: {error}"))?;
@@ -137,7 +140,7 @@ pub fn load_dashboard_data() -> Result<DashboardData, String> {
     let mut courses = Vec::new();
 
     for row in course_rows {
-        let (course_id, course_name, teacher) =
+        let (course_id, course_name, teacher, term_category) =
             row.map_err(|error| format!("failed to read dashboard course row: {error}"))?;
 
         let notices = if has_notice_entries {
@@ -172,6 +175,7 @@ pub fn load_dashboard_data() -> Result<DashboardData, String> {
         courses.push(DashboardCourse {
             course_id,
             course_name,
+            term_category,
             teacher,
             materials_url,
             notices_url,

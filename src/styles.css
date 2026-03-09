@@ -1031,6 +1031,39 @@ select {
   gap: 12px;
 }
 
+.settings-scope-toggle {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.settings-scope-toggle__button {
+  min-height: 38px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255, 252, 247, 0.95);
+  color: var(--text);
+  cursor: pointer;
+  transition:
+    transform 140ms ease,
+    background 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease;
+}
+
+.settings-scope-toggle__button:hover {
+  transform: translateY(-1px);
+  background: #fff6e7;
+  border-color: rgba(166, 143, 121, 0.42);
+}
+
+.settings-scope-toggle__button[data-active='true'] {
+  background: rgba(166, 143, 121, 0.18);
+  border-color: rgba(166, 143, 121, 0.36);
+  color: #5f4a39;
+}
+
 .settings-field {
   display: flex;
   flex-direction: column;
