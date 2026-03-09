@@ -1,6 +1,7 @@
 import { request } from '@playwright/test'
 import { access, mkdir, writeFile } from 'node:fs/promises'
 import { basename, extname, parse, resolve } from 'node:path'
+import { Buffer } from 'node:buffer'
 
 import { authPaths } from '../auth/paths.js'
 
@@ -98,6 +99,37 @@ function parseContentDispositionFileName(headerValue: string | undefined): strin
   return plainMatch?.[1]?.trim()
 }
 
+function scoreReadableFileName(fileName: string | undefined): number {
+  if (!fileName) {
+    return -1
+  }
+
+  let score = 0
+  if (/[\u4e00-\u9fff]/.test(fileName)) {
+    score += 3
+  }
+  if (/\.[A-Za-z0-9]{1,8}$/.test(fileName)) {
+    score += 2
+  }
+  if (!/[Ã�æçé]/.test(fileName)) {
+    score += 1
+  }
+  return score
+}
+
+function tryRepairUtf8Mojibake(fileName: string | undefined): string | undefined {
+  if (!fileName) {
+    return undefined
+  }
+
+  const repaired = Buffer.from(fileName, 'latin1').toString('utf8')
+  if (repaired.includes('\uFFFD')) {
+    return fileName
+  }
+
+  return scoreReadableFileName(repaired) > scoreReadableFileName(fileName) ? repaired : fileName
+}
+
 function sanitizeFileName(fileName: string): string {
   const trimmed = fileName.trim()
   const safe = trimmed.replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_')
@@ -109,12 +141,18 @@ function inferFileName(
   dispositionName: string | undefined,
   finalUrl: string,
 ): string {
-  if (suggestedName) {
-    return sanitizeFileName(suggestedName)
+  const normalizedSuggestedName = tryRepairUtf8Mojibake(suggestedName)
+  const normalizedDispositionName = tryRepairUtf8Mojibake(dispositionName)
+
+  if (
+    normalizedSuggestedName &&
+    scoreReadableFileName(normalizedSuggestedName) >= scoreReadableFileName(normalizedDispositionName)
+  ) {
+    return sanitizeFileName(normalizedSuggestedName)
   }
 
-  if (dispositionName) {
-    return sanitizeFileName(dispositionName)
+  if (normalizedDispositionName) {
+    return sanitizeFileName(normalizedDispositionName)
   }
 
   const pathnameName = basename(new URL(finalUrl).pathname)
