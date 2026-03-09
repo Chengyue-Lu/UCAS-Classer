@@ -11,6 +11,7 @@
     "auth:login:legacy": "tsx automation/auth/login-and-save.ts",
     "auth:check": "tsx automation/auth/check-api.ts",
     "auth:check:headed": "tsx automation/auth/check-auth.ts --headed",
+    "auth:open-url": "tsx automation/auth/open-authenticated-url.ts",
     "webcheck": "tsx automation/auth/webcheck.ts",
     "download:file": "tsx automation/downloads/download-file.ts",
     "courses:collect": "tsx automation/request-course-list/run-course-list.ts",

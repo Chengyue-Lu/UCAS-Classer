@@ -586,7 +586,7 @@ function openDetailModal(kind, course, item) {
     if (item.detailUrl) {
       modalActions.append(
         createDetailAction('打开原始页面', () => {
-          openExternalUrl(item.detailUrl)
+          openAuthenticatedUrl(item.detailUrl)
         }),
       )
     }
@@ -850,6 +850,21 @@ async function openExternalUrl(url) {
   const result = await invokeTauriCommand('open_external_url', { url })
   if (result === null) {
     window.open(url, '_blank', 'noopener,noreferrer')
+  }
+}
+
+async function openAuthenticatedUrl(url) {
+  if (!url) {
+    return
+  }
+
+  try {
+    const result = await invokeTauriCommand('open_authenticated_url', { url })
+    if (result === null) {
+      window.open(url, '_blank', 'noopener,noreferrer')
+    }
+  } catch (error) {
+    setModalFeedback(String(error), 'error')
   }
 }
 

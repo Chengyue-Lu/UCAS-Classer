@@ -27,6 +27,7 @@ use ucas_classer::auth_runtime::{
 use ucas_classer::downloads::{
     download_protected_file as download_protected_file_impl, ProtectedDownloadResult,
 };
+use ucas_classer::script_runner::spawn_hidden_background_script;
 
 #[tauri::command]
 fn load_dashboard_data() -> Result<DashboardData, String> {
@@ -177,6 +178,13 @@ fn open_external_url(url: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn open_authenticated_url(url: String) -> Result<(), String> {
+    let child = spawn_hidden_background_script("auth:open-url", &["--url", &url])?;
+    let _ = child.id();
+    Ok(())
+}
+
+#[tauri::command]
 fn download_protected_file(
     url: String,
     suggested_name: Option<String>,
@@ -210,6 +218,7 @@ fn main() {
             window_minimize,
             window_close,
             open_external_url,
+            open_authenticated_url,
             download_protected_file,
         ])
         .run(tauri::generate_context!())

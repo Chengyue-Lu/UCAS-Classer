@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use std::process::{Command, Output, Stdio};
+use std::process::{Child, Command, Output, Stdio};
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -108,6 +108,18 @@ pub fn run_visible_login_script(script: &str, extra_args: &[&str]) -> Result<Scr
         stdout: String::new(),
         stderr: String::new(),
     })
+}
+
+pub fn spawn_hidden_background_script(script: &str, extra_args: &[&str]) -> Result<Child, String> {
+    let mut command = base_command(script, extra_args);
+    command.stdin(Stdio::null());
+    command.stdout(Stdio::null());
+    command.stderr(Stdio::null());
+    apply_window_mode(&mut command, ScriptWindow::Hidden);
+
+    command
+        .spawn()
+        .map_err(|error| format!("failed to run background `{script}`: {error}"))
 }
 
 pub fn storage_state_modified_ms(path: PathBuf) -> Option<u64> {

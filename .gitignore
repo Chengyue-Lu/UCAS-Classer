@@ -13,8 +13,7 @@ data/cache/
 data/cache-browser-baseline/
 data/session/
 auth.local.json
-tests/incremental-sync-lab/
-tests/login-lab/
+tests/
 *.db
 *.sqlite
 *.sqlite3
