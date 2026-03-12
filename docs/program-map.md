@@ -3,6 +3,13 @@
 
 ## 1. 基线与范围
 
+### 1.0 2026-03-12 / v1.0.3 补充
+
+- 当前前端下载链已包含：下载目录选择器、课程分目录、资料批量下载、下载状态行。
+- 课程分目录的最终落盘规则为：`downloadDir / courseDownloadSubdirs[courseId] / materialParentPath / fileName`。
+- 资料批量下载当前实现为前端串行调用 `download_protected_file`，以减少 UI 卡顿并提供逐项进度反馈。
+- package 端继续使用系统路径存储；开发端与打包端运行共享层通过同步脚本保持一致。
+
 ### 1.1 分析边界
 
 - 本文以 `git ls-files` 可见的主仓源码为权威范围。

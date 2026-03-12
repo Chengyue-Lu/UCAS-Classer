@@ -6,6 +6,7 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     AppHandle, Manager, RunEvent, State, WebviewUrl, WebviewWindowBuilder, Window, WindowEvent,
 };
+use tauri_plugin_dialog::DialogExt;
 use ucas_classer::app_data::{load_dashboard_data as load_dashboard_data_impl, DashboardData};
 use ucas_classer::app_settings::{
     load_app_settings as load_app_settings_impl, save_app_settings as save_app_settings_impl,
@@ -31,7 +32,9 @@ use ucas_classer::auth_runtime::{
     RuntimeService, RuntimeSnapshot, SharedRuntimeService,
 };
 use ucas_classer::downloads::{
-    download_protected_file as download_protected_file_impl, ProtectedDownloadResult,
+    download_protected_file as download_protected_file_impl,
+    download_protected_files as download_protected_files_impl, BatchDownloadResult, DownloadRequest,
+    ProtectedDownloadResult,
 };
 use ucas_classer::script_runner::spawn_hidden_background_script;
 
@@ -279,16 +282,46 @@ fn open_authenticated_url(url: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn download_protected_file(
+fn pick_folder_path(app: AppHandle, initial_path: Option<String>) -> Result<Option<String>, String> {
+    let mut builder = app.dialog().file();
+    if let Some(path) = initial_path.filter(|value| !value.trim().is_empty()) {
+        builder = builder.set_directory(path);
+    }
+
+    Ok(builder
+        .blocking_pick_folder()
+        .and_then(|path| path.into_path().ok())
+        .map(|path| path.display().to_string()))
+}
+
+#[tauri::command]
+async fn download_protected_file(
+    course_id: Option<String>,
     url: String,
     suggested_name: Option<String>,
     referer: Option<String>,
+    relative_subdir: Option<String>,
+    conflict_policy: Option<String>,
 ) -> Result<ProtectedDownloadResult, String> {
-    download_protected_file_impl(url, suggested_name, referer)
+    download_protected_file_impl(
+        course_id,
+        url,
+        suggested_name,
+        referer,
+        relative_subdir,
+        conflict_policy,
+    )
+    .await
+}
+
+#[tauri::command]
+async fn download_protected_files(requests: Vec<DownloadRequest>) -> Result<BatchDownloadResult, String> {
+    download_protected_files_impl(requests).await
 }
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .manage(RuntimeService::new())
         .manage(ExitGuard(AtomicBool::new(false)))
         .setup(|app| {
@@ -327,7 +360,9 @@ fn main() {
             window_close,
             open_external_url,
             open_authenticated_url,
+            pick_folder_path,
             download_protected_file,
+            download_protected_files,
         ])
         .build(tauri::generate_context!())
         .expect("failed to build tauri application")

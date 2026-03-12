@@ -1,5 +1,11 @@
 # 打包端运行层同步说明
 
+## 2026-03-12 当前补充
+
+- 当前运行共享层已覆盖下载目录选择、课程分目录、资料批量下载和下载状态显示。
+- package 端仍保留系统路径存储约束；同步脚本不会覆盖 package 壳层中的系统路径解析逻辑。
+- 发布前推荐流程已固定为：`--check -> --write -> package build`。
+
 ## 1. 目标
 
 主仓是运行主线的唯一权威源码。  
@@ -81,10 +87,12 @@ node scripts/sync-package-runtime.mjs --write
    - `npm run check`
    - `cargo check --manifest-path src-tauri/Cargo.toml`
 3. 执行同步：
+   - `node scripts/sync-package-runtime.mjs --check`
    - `node scripts/sync-package-runtime.mjs --write`
 4. 在 package 端重建并检查：
    - `npm run check`
    - `npm run build:runtime`
+   - `npm run tauri:build`
    - `cargo check --manifest-path src-tauri/Cargo.toml`
 
 ## 6. 禁止事项

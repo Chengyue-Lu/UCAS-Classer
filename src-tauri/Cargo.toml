@@ -12,4 +12,5 @@ rusqlite = { version = "0.37", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri-plugin-dialog = "2"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time"] }

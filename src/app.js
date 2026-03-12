@@ -5,6 +5,7 @@ const emptyState = document.querySelector('#empty-state')
 const runtimeStatus = document.querySelector('#runtime-status')
 const runtimeCheckAge = document.querySelector('#runtime-check-age')
 const runtimeCollectAge = document.querySelector('#runtime-collect-age')
+const downloadStatus = document.querySelector('#download-status')
 const runtimeButtons = document.querySelectorAll('[data-runtime-action]')
 const modalOverlay = document.querySelector('#detail-modal')
 const modalKind = document.querySelector('#modal-kind')
@@ -15,6 +16,7 @@ const modalFeedback = document.querySelector('#modal-feedback')
 const modalBody = document.querySelector('#modal-body')
 const modalClose = document.querySelector('#modal-close')
 const modalPanel = document.querySelector('.modal-panel')
+let downloadStatusResetTimer = null
 
 const state = {
   runtime: null,
@@ -27,11 +29,19 @@ const state = {
   settings: {
     downloadDir: '',
     courseScope: 'all',
+    courseDownloadSubdirs: {},
     authCheckIntervalSecs: 180,
     collectIntervalSecs: 3600,
     cookieRefreshIntervalSecs: 3600,
   },
   activeAction: null,
+  downloadProgress: {
+    phase: 'idle',
+    completedCount: 0,
+    totalCount: 0,
+    successCount: 0,
+    failureCount: 0,
+  },
   modalOpen: false,
   modalType: null,
   lastSeenDbImportFinishedAt: null,
@@ -215,10 +225,182 @@ function syncRuntimePanel() {
   runtimeStatus.dataset.state = getRuntimeTone(snapshot)
   runtimeCheckAge.textContent = formatRelativeTime(snapshot?.last_auth_check_at_ms ?? null)
   runtimeCollectAge.textContent = formatRelativeTime(snapshot?.last_collect_finished_at_ms ?? null)
+  syncDownloadStatus()
 
   runtimeButtons.forEach((button) => {
     button.dataset.active = String(button.dataset.runtimeAction === state.activeAction)
   })
+}
+
+function syncDownloadStatus() {
+  if (!downloadStatus) {
+    return
+  }
+
+  const progress = state.downloadProgress
+
+  if (progress.phase === 'running') {
+    downloadStatus.dataset.state = 'warning'
+    downloadStatus.textContent = `Downloading... ${progress.completedCount}/${progress.totalCount}`
+    return
+  }
+
+  if (progress.phase === 'success') {
+    downloadStatus.dataset.state = 'online'
+    downloadStatus.textContent = 'Success!'
+    return
+  }
+
+  if (progress.phase === 'fail') {
+    downloadStatus.dataset.state = 'danger'
+    downloadStatus.textContent = `Fail: ${progress.successCount} Success, ${progress.failureCount} Fail`
+    return
+  }
+
+  downloadStatus.dataset.state = 'neutral'
+  downloadStatus.textContent = 'Waiting...'
+}
+
+function clearDownloadStatusResetTimer() {
+  if (downloadStatusResetTimer !== null) {
+    window.clearTimeout(downloadStatusResetTimer)
+    downloadStatusResetTimer = null
+  }
+}
+
+function setDownloadProgress(nextProgress) {
+  clearDownloadStatusResetTimer()
+  state.downloadProgress = nextProgress
+  syncDownloadStatus()
+
+  if (nextProgress.phase === 'success') {
+    downloadStatusResetTimer = window.setTimeout(() => {
+      state.downloadProgress = {
+        phase: 'idle',
+        completedCount: 0,
+        totalCount: 0,
+        successCount: 0,
+        failureCount: 0,
+      }
+      downloadStatusResetTimer = null
+      syncDownloadStatus()
+    }, 20000)
+  }
+}
+
+function getCourseScopeLabel(scope) {
+  if (scope === 'current') {
+    return '当前学期'
+  }
+
+  if (scope === 'past') {
+    return '以往学期'
+  }
+
+  return '全部'
+}
+
+function normalizeRelativeSubdir(relativeDir) {
+  if (!relativeDir) {
+    return ''
+  }
+
+  const segments = String(relativeDir)
+    .replace(/\\/g, '/')
+    .split('/')
+    .map((segment) => segment.trim())
+    .filter(Boolean)
+
+  if (
+    segments.length === 0 ||
+    segments.some((segment) => segment === '..' || segment.includes(':'))
+  ) {
+    return ''
+  }
+
+  return segments.join('/')
+}
+
+function joinRelativeSubdirs(...parts) {
+  const segments = parts
+    .flatMap((part) => normalizeRelativeSubdir(part).split('/'))
+    .map((segment) => segment.trim())
+    .filter(Boolean)
+
+  return segments.join('/')
+}
+
+function normalizeSystemPath(path) {
+  return String(path || '')
+    .trim()
+    .replace(/\//g, '\\')
+    .replace(/\\+/g, '\\')
+}
+
+function isPathInsideBase(basePath, selectedPath) {
+  const normalizedBase = normalizeSystemPath(basePath).replace(/\\$/, '')
+  const normalizedSelected = normalizeSystemPath(selectedPath).replace(/\\$/, '')
+
+  if (!normalizedBase || !normalizedSelected) {
+    return false
+  }
+
+  const baseLower = normalizedBase.toLowerCase()
+  const selectedLower = normalizedSelected.toLowerCase()
+  return selectedLower === baseLower || selectedLower.startsWith(`${baseLower}\\`)
+}
+
+function toRelativeSubdir(basePath, selectedPath) {
+  if (!isPathInsideBase(basePath, selectedPath)) {
+    return ''
+  }
+
+  const normalizedBase = normalizeSystemPath(basePath).replace(/\\$/, '')
+  const normalizedSelected = normalizeSystemPath(selectedPath).replace(/\\$/, '')
+  if (normalizedBase.toLowerCase() === normalizedSelected.toLowerCase()) {
+    return ''
+  }
+
+  return normalizeRelativeSubdir(normalizedSelected.slice(normalizedBase.length + 1))
+}
+
+function getCourseSubdirSelectionPath(downloadDir, relativeSubdir) {
+  const basePath = normalizeSystemPath(downloadDir)
+  if (!basePath) {
+    return ''
+  }
+
+  const normalizedRelative = normalizeRelativeSubdir(relativeSubdir)
+  if (!normalizedRelative) {
+    return basePath
+  }
+
+  return `${basePath}\\${normalizedRelative.replace(/\//g, '\\')}`
+}
+
+function getCourseDownloadSubdir(courseId) {
+  const value = state.settings.courseDownloadSubdirs?.[courseId]
+  return typeof value === 'string' ? normalizeRelativeSubdir(value) : ''
+}
+
+function getMaterialRelativeDir(item) {
+  const segments = String(item?.path || '')
+    .replace(/\\/g, '/')
+    .split('/')
+    .map((segment) => segment.trim())
+    .filter(Boolean)
+
+  if (segments.length <= 1) {
+    return ''
+  }
+
+  return normalizeRelativeSubdir(segments.slice(0, -1).join('/'))
+}
+
+function getDownloadRelativeDir(course, item = null) {
+  const courseRelativeDir = getCourseDownloadSubdir(course?.courseId)
+  const materialRelativeDir = item && item.nodeType === 'file' ? getMaterialRelativeDir(item) : ''
+  return joinRelativeSubdirs(courseRelativeDir, materialRelativeDir)
 }
 
 function createInlineStat(label, count) {
@@ -289,9 +471,9 @@ function createCourseCard(course) {
   const modules = document.createElement('div')
   modules.className = 'course-card__modules'
   modules.append(
-    createModuleCard(course, 'notice', '通知', course.notices),
-    createModuleCard(course, 'materials', '资料', course.materials),
-    createModuleCard(course, 'assignments', '作业', course.assignments),
+    createModuleCard(course, 'notice', '通知', course.notices || []),
+    createModuleCard(course, 'materials', '资料', course.materials || []),
+    createModuleCard(course, 'assignments', '作业', course.assignments || []),
   )
 
   bodyInner.append(modules)
@@ -325,6 +507,8 @@ function getItemTitle(kind, item) {
 
 function createModuleCard(course, kind, label, items) {
   const displayItems = getDisplayItems(kind, items)
+  const downloadableItems = displayItems.filter((item) => item.downloadUrl)
+
   const moduleCard = document.createElement('article')
   moduleCard.className = 'module-card'
   moduleCard.dataset.expanded = 'false'
@@ -361,6 +545,23 @@ function createModuleCard(course, kind, label, items) {
     empty.textContent = `暂无${label}`
     body.append(empty)
   } else {
+    if (kind === 'materials' && downloadableItems.length > 0) {
+      const toolbar = document.createElement('div')
+      toolbar.className = 'module-card__toolbar'
+
+      const batchButton = document.createElement('button')
+      batchButton.className = 'module-card__toolbar-button'
+      batchButton.type = 'button'
+      batchButton.textContent = '批量下载资料'
+      batchButton.addEventListener('click', async (event) => {
+        event.stopPropagation()
+        await downloadMaterialBatch(course, downloadableItems)
+      })
+
+      toolbar.append(batchButton)
+      body.append(toolbar)
+    }
+
     const list = document.createElement('ul')
     list.className = 'module-card__list'
 
@@ -405,7 +606,7 @@ function createModuleCard(course, kind, label, items) {
 
         const arrow = document.createElement('span')
         arrow.className = 'module-item-button__arrow'
-        arrow.textContent = '↗'
+        arrow.textContent = '→'
 
         button.append(text, arrow)
         button.addEventListener('click', (event) => {
@@ -471,18 +672,6 @@ function refreshTitleMarquee(card) {
   marquee.style.removeProperty('--scroll-distance')
 }
 
-function renderCourses() {
-  courseList.replaceChildren()
-
-  const courses = getScopedCourses()
-  courseCount.textContent = `${courses.length} courses`
-  emptyState.hidden = courses.length > 0
-
-  courses.forEach((course) => {
-    courseList.append(createCourseCard(course))
-  })
-}
-
 function getScopedCourses() {
   const courses = state.dashboard.courses ?? []
   const scope = state.settings.courseScope || 'all'
@@ -496,6 +685,18 @@ function getScopedCourses() {
   }
 
   return courses
+}
+
+function renderCourses() {
+  courseList.replaceChildren()
+
+  const courses = getScopedCourses()
+  courseCount.textContent = `${courses.length} courses`
+  emptyState.hidden = courses.length > 0
+
+  courses.forEach((course) => {
+    courseList.append(createCourseCard(course))
+  })
 }
 
 function createDetailChip(label, value) {
@@ -515,6 +716,9 @@ function createDetailAction(label, onClick, options = {}) {
   button.className = 'detail-action'
   if (options.primary) {
     button.classList.add('detail-action--primary')
+  }
+  if (options.compact) {
+    button.classList.add('detail-action--compact')
   }
   button.type = 'button'
   button.textContent = label
@@ -608,7 +812,26 @@ function syncSettingsMeta(settings) {
   modalMeta.replaceChildren(downloadChip, summaryRow)
 }
 
-async function downloadResource({ url, suggestedName, referer }) {
+async function pickFolderPath(initialPath = '') {
+  const selectedPath = await invokeTauriCommand('pick_folder_path', {
+    initialPath: initialPath || null,
+  })
+
+  if (selectedPath === null) {
+    throw new Error('当前环境不支持系统目录选择器。')
+  }
+
+  return typeof selectedPath === 'string' ? selectedPath : ''
+}
+
+async function downloadResource({
+  courseId = null,
+  url,
+  suggestedName,
+  referer,
+  relativeSubdir = '',
+  conflictPolicy = 'rename',
+}) {
   if (!url) {
     setModalFeedback('当前条目没有可用下载地址。', 'error')
     return
@@ -623,9 +846,12 @@ async function downloadResource({ url, suggestedName, referer }) {
 
   try {
     const result = await invokeTauriCommand('download_protected_file', {
+      courseId,
       url,
-      suggested_name: suggestedName ?? null,
+      suggestedName: suggestedName ?? null,
       referer,
+      relativeSubdir: normalizeRelativeSubdir(relativeSubdir) || null,
+      conflictPolicy,
     })
 
     if (!result) {
@@ -635,6 +861,170 @@ async function downloadResource({ url, suggestedName, referer }) {
 
     setModalFeedback(`已下载到: ${result.savedPath}`, 'success')
   } catch (error) {
+    setModalFeedback(String(error), 'error')
+  }
+}
+
+async function downloadMaterialBatchLegacy(course, items) {
+  if (!state.settings.downloadDir?.trim()) {
+    openSettingsModal('请先设置下载目录。')
+    return
+  }
+
+  const requests = items
+    .filter((item) => item.nodeType === 'file' && item.downloadUrl)
+    .map((item) => ({
+      url: item.downloadUrl,
+      suggestedName: item.name || item.title || null,
+      referer: course.materialsUrl || null,
+      relativeSubdir: getDownloadRelativeDir(course, item) || null,
+    }))
+
+  if (!requests.length) {
+    setModalFeedback('当前课程没有可批量下载的资料。', 'warning')
+    return
+  }
+
+  setModalFeedback(`正在批量下载 ${requests.length} 项资料...`, 'info')
+
+  try {
+    const result = await invokeTauriCommand('download_protected_files', {
+      requests,
+    })
+
+    if (!result) {
+      setModalFeedback('当前不在 Tauri 环境内，无法执行内置批量下载。', 'error')
+      return
+    }
+
+    const failedItems = (result.items || []).filter((item) => !item.ok).slice(0, 3)
+    const failureSummary = failedItems
+      .map((item) => `${item.suggestedName || '未命名文件'}: ${item.error || '下载失败'}`)
+      .join(' | ')
+    const summary = `批量下载完成：成功 ${result.successCount} / 失败 ${result.failureCount} / 共 ${result.totalCount}`
+
+    if (result.failureCount > 0) {
+      console.error('Material batch download result', result)
+      setModalFeedback(failureSummary ? `${summary}。${failureSummary}` : summary, 'warning')
+      return
+    }
+
+    setModalFeedback(summary, 'success')
+  } catch (error) {
+    setModalFeedback(String(error), 'error')
+  }
+}
+
+async function downloadMaterialBatch(course, items) {
+  if (state.downloadProgress.phase === 'running') {
+    setModalFeedback('当前已有批量下载任务在执行。', 'warning')
+    return
+  }
+
+  if (!state.settings.downloadDir?.trim()) {
+    openSettingsModal('请先设置下载目录。')
+    return
+  }
+
+  const requests = items
+    .filter((item) => item.nodeType === 'file' && item.downloadUrl)
+    .map((item) => ({
+      url: item.downloadUrl,
+      suggestedName: item.name || item.title || null,
+      referer: course.materialsUrl || null,
+      relativeSubdir: getDownloadRelativeDir(course, item) || null,
+    }))
+
+  if (!requests.length) {
+    setModalFeedback('当前课程没有可批量下载的资料。', 'warning')
+    return
+  }
+
+  setDownloadProgress({
+    phase: 'running',
+    completedCount: 0,
+    totalCount: requests.length,
+    successCount: 0,
+    failureCount: 0,
+  })
+  setModalFeedback(`正在批量下载 ${requests.length} 项资料...`, 'info')
+
+  const failedItems = []
+  let successCount = 0
+
+  try {
+    for (let index = 0; index < requests.length; index += 1) {
+      const request = requests[index]
+
+      try {
+        const result = await invokeTauriCommand('download_protected_file', {
+          courseId: request.courseId ?? null,
+          url: request.url,
+          suggestedName: request.suggestedName ?? null,
+          referer: request.referer,
+          relativeSubdir: request.relativeSubdir,
+          conflictPolicy: 'overwrite',
+        })
+
+        if (!result) {
+          throw new Error('当前不在 Tauri 环境内，无法执行内置批量下载。')
+        }
+
+        successCount += 1
+      } catch (error) {
+        failedItems.push({
+          suggestedName: request.suggestedName,
+          error: String(error),
+        })
+      }
+
+      setDownloadProgress({
+        phase: 'running',
+        completedCount: index + 1,
+        totalCount: requests.length,
+        successCount,
+        failureCount: failedItems.length,
+      })
+      await new Promise((resolve) => {
+        window.setTimeout(resolve, 0)
+      })
+    }
+
+    if (failedItems.length > 0) {
+      setDownloadProgress({
+        phase: 'fail',
+        completedCount: requests.length,
+        totalCount: requests.length,
+        successCount,
+        failureCount: failedItems.length,
+      })
+
+      const failureSummary = failedItems
+        .slice(0, 3)
+        .map((item) => `${item.suggestedName || '未命名文件'}: ${item.error || '下载失败'}`)
+        .join(' | ')
+      const summary = `批量下载完成：成功 ${successCount} / 失败 ${failedItems.length} / 共 ${requests.length}`
+      console.error('Material batch download failures', failedItems)
+      setModalFeedback(failureSummary ? `${summary}。${failureSummary}` : summary, 'warning')
+      return
+    }
+
+    setDownloadProgress({
+      phase: 'success',
+      completedCount: requests.length,
+      totalCount: requests.length,
+      successCount,
+      failureCount: 0,
+    })
+    setModalFeedback(`批量下载完成：成功 ${successCount} / 共 ${requests.length}`, 'success')
+  } catch (error) {
+    setDownloadProgress({
+      phase: 'fail',
+      completedCount: state.downloadProgress.completedCount,
+      totalCount: requests.length,
+      successCount,
+      failureCount: Math.max(1, failedItems.length),
+    })
     setModalFeedback(String(error), 'error')
   }
 }
@@ -665,9 +1055,11 @@ function openDetailModal(kind, course, item) {
       '附件',
       createAttachmentList(item.attachments || [], (attachment) => {
         downloadResource({
+          courseId: course.courseId,
           url: attachment.url,
           suggestedName: attachment.title || '附件',
           referer: item.detailUrl || course.noticesUrl || null,
+          relativeSubdir: getDownloadRelativeDir(course),
         })
       }),
     )
@@ -692,9 +1084,11 @@ function openDetailModal(kind, course, item) {
           '下载到本地',
           () => {
             downloadResource({
+              courseId: course.courseId,
               url: item.downloadUrl,
               suggestedName: item.name || item.title,
               referer: course.materialsUrl || null,
+              relativeSubdir: getDownloadRelativeDir(course, item),
             })
           },
           { primary: true },
@@ -714,9 +1108,7 @@ function openDetailModal(kind, course, item) {
     appendDetailSection('路径', createTextBlock(item.path || item.title || ''))
     appendDetailSection(
       '说明',
-      createTextBlock(
-        '当前下载由后端直接携带已保存 cookie 执行，文件会落到设置里的下载目录。'
-      ),
+      createTextBlock('下载会沿用当前登录态，并自动落到设置中的主下载目录与课程子目录下。'),
     )
   }
 
@@ -739,7 +1131,7 @@ function openDetailModal(kind, course, item) {
     }
 
     appendDetailSection('详情', createTextBlock(item.rawText || ''))
-    appendDetailSection('说明', createTextBlock('当前只展示详情，不代替提交。'))
+    appendDetailSection('说明', createTextBlock('当前仅展示详情，不代替提交。'))
   }
 
   modalOverlay.hidden = false
@@ -750,28 +1142,196 @@ function openDetailModal(kind, course, item) {
 function createSettingsField(label, value, options = {}) {
   const field = document.createElement('label')
   field.className = 'settings-field'
+  if (options.compact) {
+    field.classList.add('settings-field--compact')
+  }
 
   const title = document.createElement('span')
   title.className = 'settings-field__label'
   title.textContent = label
 
-  let control
-  if (options.multiline) {
-    control = document.createElement('textarea')
-    control.rows = 3
-  } else {
-    control = document.createElement('input')
-    control.type = 'text'
-  }
-
+  const control = document.createElement('input')
+  control.type = options.type || 'text'
   control.className = 'settings-field__control'
   control.value = value ?? ''
   control.placeholder = options.placeholder ?? ''
   control.disabled = Boolean(options.disabled)
+  control.min = options.min ?? ''
   control.dataset.field = options.fieldName ?? ''
 
   field.append(title, control)
   return { field, control }
+}
+
+function createSettingsActionRow() {
+  const row = document.createElement('div')
+  row.className = 'settings-action-row'
+  return row
+}
+
+async function openCourseSubdirModal(feedbackMessage = '') {
+  state.modalType = 'course-subdirs'
+  resetModal()
+  modalPanel.dataset.layout = 'settings'
+
+  modalKind.textContent = 'Subdirs'
+  modalTitle.textContent = '课程分目录'
+  syncSettingsMeta(state.settings)
+
+  if (!state.settings.downloadDir?.trim()) {
+    setModalFeedback('请先在全局设置里配置下载目录。', 'warning')
+  }
+
+  const courses = [...(state.dashboard.courses || [])].sort((left, right) =>
+    String(left.courseName || '').localeCompare(String(right.courseName || ''), 'zh-CN'),
+  )
+  const draftSubdirs = {
+    ...(state.settings.courseDownloadSubdirs || {}),
+  }
+
+  const list = document.createElement('div')
+  list.className = 'course-subdir-list'
+
+  const persistCourseSubdirs = async (successMessage) => {
+    const saved = await invokeTauriCommand('save_app_settings', {
+      settings: {
+        ...state.settings,
+        courseDownloadSubdirs: Object.fromEntries(
+          Object.entries(draftSubdirs)
+            .map(([courseId, relativeDir]) => [courseId, normalizeRelativeSubdir(relativeDir)])
+            .filter(([, relativeDir]) => relativeDir),
+        ),
+      },
+    })
+
+    if (!saved) {
+      throw new Error('当前不在 Tauri 环境内，无法保存设置。')
+    }
+
+    state.settings = saved
+    renderCourses()
+    if (successMessage) {
+      setModalFeedback(successMessage, 'success')
+    }
+  }
+
+  const renderRows = () => {
+    list.replaceChildren()
+
+    if (!courses.length) {
+      list.append(createTextBlock('当前没有已加载课程，无法配置课程分目录。'))
+      return
+    }
+
+    courses.forEach((course) => {
+      const currentValue = normalizeRelativeSubdir(draftSubdirs[course.courseId] || '')
+      const row = document.createElement('section')
+      row.className = 'course-subdir-row'
+
+      const header = document.createElement('div')
+      header.className = 'course-subdir-row__header'
+
+      const title = document.createElement('h3')
+      title.className = 'course-subdir-row__title'
+      title.textContent = course.courseName
+
+      const value = document.createElement('p')
+      value.className = 'course-subdir-row__value'
+      value.textContent = currentValue || '未设置，直接下载到主目录'
+
+      header.append(title, value)
+
+      const actions = document.createElement('div')
+      actions.className = 'course-subdir-row__actions'
+
+      const selectButton = createDetailAction('选择子文件夹', async () => {
+        if (!state.settings.downloadDir?.trim()) {
+          setModalFeedback('请先在全局设置里配置下载目录。', 'warning')
+          return
+        }
+
+        try {
+          const selected = await pickFolderPath(
+            getCourseSubdirSelectionPath(state.settings.downloadDir, currentValue),
+          )
+          if (!selected) {
+            return
+          }
+
+          if (!isPathInsideBase(state.settings.downloadDir, selected)) {
+            setModalFeedback('课程子文件夹必须位于主下载目录之下。', 'error')
+            return
+          }
+
+          draftSubdirs[course.courseId] = toRelativeSubdir(state.settings.downloadDir, selected)
+          await persistCourseSubdirs('课程分目录已自动保存。')
+          renderRows()
+        } catch (error) {
+          setModalFeedback(String(error), 'error')
+        }
+      })
+
+      const clearButton = createDetailAction('清空', async () => {
+        try {
+          delete draftSubdirs[course.courseId]
+          await persistCourseSubdirs('课程分目录已自动保存。')
+          renderRows()
+        } catch (error) {
+          setModalFeedback(String(error), 'error')
+        }
+      })
+
+      actions.append(selectButton, clearButton)
+      row.append(header, actions)
+      list.append(row)
+    })
+  }
+
+  renderRows()
+  modalBody.append(list)
+
+  modalActions.append(
+    createDetailAction('返回全局设置', () => {
+      openSettingsModal()
+    }),
+    createDetailAction(
+      '保存分目录',
+      async () => {
+        try {
+          const saved = await invokeTauriCommand('save_app_settings', {
+            settings: {
+              ...state.settings,
+              courseDownloadSubdirs: Object.fromEntries(
+                Object.entries(draftSubdirs)
+                  .map(([courseId, relativeDir]) => [courseId, normalizeRelativeSubdir(relativeDir)])
+                  .filter(([, relativeDir]) => relativeDir),
+              ),
+            },
+          })
+
+          if (!saved) {
+            setModalFeedback('当前不在 Tauri 环境内，无法保存设置。', 'error')
+            return
+          }
+
+          state.settings = saved
+          setModalFeedback('课程分目录已保存。', 'success')
+          renderCourses()
+        } catch (error) {
+          setModalFeedback(String(error), 'error')
+        }
+      },
+      { primary: true },
+    ),
+  )
+
+  if (feedbackMessage) {
+    setModalFeedback(feedbackMessage, 'warning')
+  }
+
+  modalOverlay.hidden = false
+  appShell.classList.add('app-shell--modal-open')
+  state.modalOpen = true
 }
 
 function openSettingsModal(feedbackMessage = '') {
@@ -781,29 +1341,6 @@ function openSettingsModal(feedbackMessage = '') {
 
   modalKind.textContent = 'Settings'
   modalTitle.textContent = '应用设置'
-  modalMeta.append(
-    createDetailChip('当前下载目录', state.settings.downloadDir || '未设置'),
-    createDetailChip(
-      '课程范围',
-      state.settings.courseScope === 'current'
-        ? '当前学期'
-        : state.settings.courseScope === 'past'
-          ? '以前学期'
-          : '全部',
-    ),
-    createDetailChip(
-      'Check 间隔',
-      `${Math.max(1, Math.round((state.settings.authCheckIntervalSecs || 180) / 60))} 分钟`,
-    ),
-    createDetailChip(
-      'Collect 间隔',
-      `${Math.max(1, Math.round((state.settings.collectIntervalSecs || 3600) / 60))} 分钟`,
-    ),
-    createDetailChip(
-      'Cookie 刷新',
-      `${Math.max(1, Math.round((state.settings.cookieRefreshIntervalSecs || 3600) / 60))} 分钟`,
-    ),
-  )
   syncSettingsMeta(state.settings)
 
   const settingsForm = document.createElement('div')
@@ -814,47 +1351,63 @@ function openSettingsModal(feedbackMessage = '') {
     placeholder: '例如: D:\\Downloads\\UCAS Classer',
   })
   const authCheckField = createSettingsField(
-    'Check 间隔（分钟）',
+    'CHECK 间隔',
     intervalSecsToMinutes(state.settings.authCheckIntervalSecs, 3),
     {
       fieldName: 'authCheckIntervalSecs',
       placeholder: '默认 3',
+      type: 'number',
+      min: '1',
+      compact: true,
     },
   )
-  authCheckField.field.classList.add('settings-field--compact')
-  authCheckField.field.querySelector('.settings-field__label').textContent = 'CHECK 间隔'
-  authCheckField.control.type = 'number'
-  authCheckField.control.min = '1'
-
   const collectField = createSettingsField(
-    'Collect 间隔（分钟）',
+    'COLLECT 间隔',
     intervalSecsToMinutes(state.settings.collectIntervalSecs, 60),
     {
       fieldName: 'collectIntervalSecs',
       placeholder: '默认 60',
+      type: 'number',
+      min: '1',
+      compact: true,
     },
   )
-  collectField.field.classList.add('settings-field--compact')
-  collectField.field.querySelector('.settings-field__label').textContent = 'COLLECT 间隔'
-  collectField.control.type = 'number'
-  collectField.control.min = '1'
-
   const cookieRefreshField = createSettingsField(
-    'Cookie 刷新间隔（分钟）',
+    'COOKIE 刷新间隔',
     intervalSecsToMinutes(state.settings.cookieRefreshIntervalSecs, 60),
     {
       fieldName: 'cookieRefreshIntervalSecs',
       placeholder: '默认 60',
+      type: 'number',
+      min: '1',
+      compact: true,
     },
   )
-  cookieRefreshField.field.classList.add('settings-field--compact')
-  cookieRefreshField.field.querySelector('.settings-field__label').textContent = 'COOKIE 刷新间隔'
-  cookieRefreshField.control.type = 'number'
-  cookieRefreshField.control.min = '1'
+
+  const downloadActionRow = createSettingsActionRow()
+  const pickButton = createDetailAction('选择文件夹', async () => {
+    try {
+      const selected = await pickFolderPath(downloadField.control.value.trim() || state.settings.downloadDir)
+      if (!selected) {
+        return
+      }
+      downloadField.control.value = selected
+    } catch (error) {
+      setModalFeedback(String(error), 'error')
+    }
+  })
+  const subdirButton = createDetailAction('课程分目录', () => {
+    const nextDownloadDir = downloadField.control.value.trim()
+    state.settings = {
+      ...state.settings,
+      downloadDir: nextDownloadDir || state.settings.downloadDir,
+    }
+    openCourseSubdirModal()
+  })
+  downloadActionRow.append(pickButton, subdirButton)
 
   const scopeField = document.createElement('div')
-  scopeField.className = 'settings-field'
-  scopeField.classList.add('settings-field--scope')
+  scopeField.className = 'settings-field settings-field--scope'
   scopeField.append(
     Object.assign(document.createElement('span'), {
       className: 'settings-field__label',
@@ -867,7 +1420,7 @@ function openSettingsModal(feedbackMessage = '') {
   const scopeOptions = [
     { value: 'all', label: '全部' },
     { value: 'current', label: '当前学期' },
-    { value: 'past', label: '以前学期' },
+    { value: 'past', label: '以往学期' },
   ]
   let selectedScope = state.settings.courseScope || 'all'
   let scopeSaving = false
@@ -901,16 +1454,15 @@ function openSettingsModal(feedbackMessage = '') {
 
           if (!saved) {
             selectedScope = previousScope
-            setModalFeedback('Tauri bridge unavailable; scope was not saved.', 'error')
+            setModalFeedback('当前不在 Tauri 环境内，无法保存范围设置。', 'error')
             return
           }
 
           state.settings = saved
           selectedScope = saved.courseScope || option.value
           syncSettingsMeta(state.settings)
-          renderScopeButtons()
           renderCourses()
-          setModalFeedback('Course scope updated.', 'success')
+          setModalFeedback('课程范围已更新。', 'success')
         } catch (error) {
           selectedScope = previousScope
           setModalFeedback(String(error), 'error')
@@ -932,9 +1484,9 @@ function openSettingsModal(feedbackMessage = '') {
 
   const settingsHint = document.createElement('p')
   settingsHint.className = 'settings-form__hint'
-  settingsHint.textContent = '所有时间设置单位均为分钟。'
+  settingsHint.textContent = '所有时间设置单位均为分钟。课程分目录会在主下载目录下生效。'
 
-  settingsForm.append(downloadField.field, scopeField, intervalRow)
+  settingsForm.append(downloadField.field, downloadActionRow, scopeField, intervalRow)
   modalBody.append(settingsForm, settingsHint)
 
   modalActions.append(
@@ -947,10 +1499,7 @@ function openSettingsModal(feedbackMessage = '') {
           courseScope: state.settings.courseScope || selectedScope,
           authCheckIntervalSecs: intervalMinutesToSecs(authCheckField.control.value, 180),
           collectIntervalSecs: intervalMinutesToSecs(collectField.control.value, 3600),
-          cookieRefreshIntervalSecs: intervalMinutesToSecs(
-            cookieRefreshField.control.value,
-            3600,
-          ),
+          cookieRefreshIntervalSecs: intervalMinutesToSecs(cookieRefreshField.control.value, 3600),
         }
 
         try {
@@ -967,30 +1516,6 @@ function openSettingsModal(feedbackMessage = '') {
           selectedScope = state.settings.courseScope || selectedScope
           syncSettingsMeta(state.settings)
           renderScopeButtons()
-          modalMeta.replaceChildren(
-            createDetailChip('当前下载目录', state.settings.downloadDir || '未设置'),
-            createDetailChip(
-              '课程范围',
-              state.settings.courseScope === 'current'
-                ? '当前学期'
-                : state.settings.courseScope === 'past'
-                  ? '以前学期'
-                  : '全部',
-            ),
-            createDetailChip(
-              'Check 间隔',
-              `${Math.max(1, Math.round((state.settings.authCheckIntervalSecs || 180) / 60))} 分钟`,
-            ),
-            createDetailChip(
-              'Collect 间隔',
-              `${Math.max(1, Math.round((state.settings.collectIntervalSecs || 3600) / 60))} 分钟`,
-            ),
-            createDetailChip(
-              'Cookie 刷新',
-              `${Math.max(1, Math.round((state.settings.cookieRefreshIntervalSecs || 3600) / 60))} 分钟`,
-            ),
-          )
-          syncSettingsMeta(state.settings)
           renderCourses()
           setModalFeedback('设置已保存。', 'success')
         } catch (error) {
@@ -1008,43 +1533,6 @@ function openSettingsModal(feedbackMessage = '') {
   modalOverlay.hidden = false
   appShell.classList.add('app-shell--modal-open')
   state.modalOpen = true
-}
-
-function getCourseScopeLabel(scope) {
-  if (scope === 'current') {
-    return '当前学期'
-  }
-
-  if (scope === 'past') {
-    return '以前学期'
-  }
-
-  return '全部'
-}
-
-function createSettingsMeta(settings) {
-  const downloadChip = createDetailChip('下载目录', settings.downloadDir || '未设置')
-  downloadChip.classList.add('detail-chip--wide')
-
-  const summaryRow = document.createElement('div')
-  summaryRow.className = 'settings-meta-row'
-  summaryRow.append(
-    createDetailChip('范围', getCourseScopeLabel(settings.courseScope)),
-    createDetailChip(
-      'Check',
-      `${Math.max(1, Math.round((settings.authCheckIntervalSecs || 180) / 60))} 分钟`,
-    ),
-    createDetailChip(
-      'Collect',
-      `${Math.max(1, Math.round((settings.collectIntervalSecs || 3600) / 60))} 分钟`,
-    ),
-    createDetailChip(
-      'Cookie',
-      `${Math.max(1, Math.round((settings.cookieRefreshIntervalSecs || 3600) / 60))} 分钟`,
-    ),
-  )
-
-  return [downloadChip, summaryRow]
 }
 
 function closeDetailModal() {
@@ -1118,7 +1606,11 @@ async function loadSettings() {
     return
   }
 
-  state.settings = settings
+  state.settings = {
+    ...state.settings,
+    ...settings,
+    courseDownloadSubdirs: settings.courseDownloadSubdirs || {},
+  }
 }
 
 async function refreshRuntimeStatus() {

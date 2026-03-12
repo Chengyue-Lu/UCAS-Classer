@@ -1,15 +1,26 @@
 import { request } from '@playwright/test'
-import { access, mkdir, writeFile } from 'node:fs/promises'
-import { basename, extname, parse, resolve } from 'node:path'
+import { mkdir, writeFile } from 'node:fs/promises'
+import { resolve } from 'node:path'
 import { Buffer } from 'node:buffer'
 
 import { authPaths } from '../auth/paths.js'
+import {
+  detectHtmlLoginPage,
+  inferFileName,
+  parseConflictPolicy,
+  parseContentDispositionFileName,
+  resolveDownloadTarget,
+  resolveDownloadUrl,
+  type ConflictPolicy,
+} from './common.js'
 
 type DownloadArgs = {
   url: string
   outputDir: string
   suggestedName?: string
   referer?: string
+  relativeDir?: string
+  conflict: ConflictPolicy
 }
 
 type DownloadResult = {
@@ -22,7 +33,9 @@ type DownloadResult = {
 }
 
 function parseArgs(argv: string[]): DownloadArgs {
-  const parsed: Partial<DownloadArgs> = {}
+  const parsed: Partial<DownloadArgs> = {
+    conflict: 'rename',
+  }
 
   for (let index = 0; index < argv.length; index += 1) {
     const current = argv[index]
@@ -53,11 +66,25 @@ function parseArgs(argv: string[]): DownloadArgs {
     if (current === '--referer') {
       parsed.referer = next
       index += 1
+      continue
+    }
+
+    if (current === '--relative-dir') {
+      parsed.relativeDir = next
+      index += 1
+      continue
+    }
+
+    if (current === '--conflict') {
+      parsed.conflict = parseConflictPolicy(next, 'rename')
+      index += 1
     }
   }
 
   if (!parsed.url || !parsed.outputDir) {
-    throw new Error('Usage: npm run download:file -- --url <download-url> --output-dir <dir> [--suggested-name <name>] [--referer <url>]')
+    throw new Error(
+      'Usage: npm run download:file -- --url <download-url> --output-dir <dir> [--suggested-name <name>] [--referer <url>] [--relative-dir <dir>] [--conflict overwrite|rename|skip]',
+    )
   }
 
   return {
@@ -65,137 +92,8 @@ function parseArgs(argv: string[]): DownloadArgs {
     outputDir: parsed.outputDir,
     suggestedName: parsed.suggestedName,
     referer: parsed.referer,
-  }
-}
-
-function resolveDownloadUrl(rawUrl: string): string {
-  if (/^https?:\/\//i.test(rawUrl)) {
-    return rawUrl
-  }
-
-  return new URL(rawUrl, 'https://mooc.ucas.edu.cn').toString()
-}
-
-function parseContentDispositionFileName(headerValue: string | undefined): string | undefined {
-  if (!headerValue) {
-    return undefined
-  }
-
-  const utf8Match = headerValue.match(/filename\*=UTF-8''([^;]+)/i)
-  if (utf8Match?.[1]) {
-    try {
-      return decodeURIComponent(utf8Match[1])
-    } catch {
-      return utf8Match[1]
-    }
-  }
-
-  const quotedMatch = headerValue.match(/filename="([^"]+)"/i)
-  if (quotedMatch?.[1]) {
-    return quotedMatch[1]
-  }
-
-  const plainMatch = headerValue.match(/filename=([^;]+)/i)
-  return plainMatch?.[1]?.trim()
-}
-
-function scoreReadableFileName(fileName: string | undefined): number {
-  if (!fileName) {
-    return -1
-  }
-
-  let score = 0
-  if (/[\u4e00-\u9fff]/.test(fileName)) {
-    score += 3
-  }
-  if (/\.[A-Za-z0-9]{1,8}$/.test(fileName)) {
-    score += 2
-  }
-  if (!/[Ã�æçé]/.test(fileName)) {
-    score += 1
-  }
-  return score
-}
-
-function tryRepairUtf8Mojibake(fileName: string | undefined): string | undefined {
-  if (!fileName) {
-    return undefined
-  }
-
-  const repaired = Buffer.from(fileName, 'latin1').toString('utf8')
-  if (repaired.includes('\uFFFD')) {
-    return fileName
-  }
-
-  return scoreReadableFileName(repaired) > scoreReadableFileName(fileName) ? repaired : fileName
-}
-
-function sanitizeFileName(fileName: string): string {
-  const trimmed = fileName.trim()
-  const safe = trimmed.replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_')
-  return safe || 'download.bin'
-}
-
-function inferFileName(
-  suggestedName: string | undefined,
-  dispositionName: string | undefined,
-  finalUrl: string,
-): string {
-  const normalizedSuggestedName = tryRepairUtf8Mojibake(suggestedName)
-  const normalizedDispositionName = tryRepairUtf8Mojibake(dispositionName)
-
-  if (
-    normalizedSuggestedName &&
-    scoreReadableFileName(normalizedSuggestedName) >= scoreReadableFileName(normalizedDispositionName)
-  ) {
-    return sanitizeFileName(normalizedSuggestedName)
-  }
-
-  if (normalizedDispositionName) {
-    return sanitizeFileName(normalizedDispositionName)
-  }
-
-  const pathnameName = basename(new URL(finalUrl).pathname)
-  if (pathnameName && pathnameName !== '/' && pathnameName !== '.') {
-    return sanitizeFileName(pathnameName)
-  }
-
-  return 'download.bin'
-}
-
-async function ensureUniquePath(outputDir: string, fileName: string): Promise<string> {
-  const parsed = parse(fileName)
-  const baseName = parsed.name || 'download'
-  const extension = parsed.ext || extname(fileName)
-
-  let candidate = resolve(outputDir, `${baseName}${extension}`)
-  let suffix = 1
-
-  while (true) {
-    try {
-      await access(candidate)
-      candidate = resolve(outputDir, `${baseName} (${suffix})${extension}`)
-      suffix += 1
-    } catch {
-      return candidate
-    }
-  }
-}
-
-async function detectHtmlLoginPage(buffer: Buffer, contentType: string): Promise<void> {
-  if (!contentType.includes('text/html')) {
-    return
-  }
-
-  const text = buffer.toString('utf8')
-  const looksLikeLogin =
-    text.includes('统一身份认证') ||
-    text.includes('登录') ||
-    text.includes('用户登录') ||
-    text.includes('mooc.ucas.edu.cn/portal')
-
-  if (looksLikeLogin) {
-    throw new Error('Download returned an HTML login page. Current storage-state is not authorized for this resource.')
+    relativeDir: parsed.relativeDir,
+    conflict: parsed.conflict ?? 'rename',
   }
 }
 
@@ -232,14 +130,20 @@ async function main() {
     await detectHtmlLoginPage(body, contentType)
 
     const contentDisposition = headers['content-disposition']
-    const fileName = inferFileName(args.suggestedName, parseContentDispositionFileName(contentDisposition), response.url())
-    const targetPath = await ensureUniquePath(outputDir, fileName)
+    const fileName = inferFileName(
+      args.suggestedName,
+      parseContentDispositionFileName(contentDisposition),
+      response.url(),
+    )
+    const target = await resolveDownloadTarget(outputDir, args.relativeDir, fileName, args.conflict)
 
-    await writeFile(targetPath, body)
+    if (!target.skipped) {
+      await writeFile(target.savedPath, body)
+    }
 
     const result: DownloadResult = {
-      savedPath: targetPath,
-      savedFileName: basename(targetPath),
+      savedPath: target.savedPath,
+      savedFileName: target.fileName,
       outputDir,
       finalUrl: response.url(),
       contentType,

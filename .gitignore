@@ -18,6 +18,7 @@ data/tauri-dev-stdout.log
 data/tauri-dev-stderr.log
 auth.local.json
 tests/
+temp/
 *.db
 *.sqlite
 *.sqlite3

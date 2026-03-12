@@ -1,5 +1,13 @@
 # UCAS Classer 开发交接表
 <!-- markdownlint-disable -->
+
+## 2026-03-12 / v1.0.3 补充更新
+- 下载目录现已支持系统文件夹选择器。
+- 课程分目录现已接入设置持久化与下载链路，下载目标为“主下载目录 / 课程子目录 / 资料树父级目录”。
+- 资料模块现已支持批量下载，并保留资料树中的嵌套文件夹结构；批量重名文件按覆盖处理。
+- 主界面新增下载状态行：`Waiting / Downloading / Success / Fail`，成功态 20 秒后自动回到 `Waiting`。
+- 登录态存储路径已对齐；开发端兼容仓库内 `data/auth/`，打包端继续走系统路径，不做回退。
+- `ucasclasser-package/` 继续只维护 package 壳层，运行共享层通过 `scripts/sync-package-runtime.mjs` 下发。
 ## 项目现状
 - 当前开发主线已经从页面驱动逐步迁到 `API / request` 路线。
 - 登录仍保留浏览器参与，但登录后的绝大多数动作已经不再依赖可见页面。
@@ -49,7 +57,9 @@
   - `npm run auth:reset`
   - `npm run auth:login`
   - `npm run auth:check`
-  - `npm run webcheck`
+- 下载
+  - `npm run download:file -- --url <url> --output-dir <dir>`
+  - `npm run download:batch -- --manifest <path> --output-dir <dir> --conflict overwrite`
 - 采集 / 导库
   - `npm run courses:collect`
   - `npm run collect:all -- --concurrency 4`
@@ -89,7 +99,6 @@
 - 某些页面中文在终端里显示会乱码；读取中文文件时应优先按 UTF-8 理解内容，而不是依赖终端直接显示。
 
 ## 下一阶段建议
-- 下载目录支持资源管理器选文件夹
-- 下载分目录与批量下载
 - 通知 / 作业详情内部展示继续完善
+- 通知 / 作业附件是否要批量下载可以单独评估
 - 继续验证托盘与调度在打包端的长期稳定性

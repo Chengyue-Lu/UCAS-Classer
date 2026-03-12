@@ -1,4 +1,5 @@
 use std::fs;
+use std::path::{Component, Path};
 
 use serde::{Deserialize, Serialize};
 
@@ -13,6 +14,7 @@ const DEFAULT_COOKIE_REFRESH_INTERVAL_SECS: u64 = 60 * 60;
 pub struct AppSettings {
     pub download_dir: String,
     pub course_scope: String,
+    pub course_download_subdirs: std::collections::BTreeMap<String, String>,
     pub auth_check_interval_secs: u64,
     pub collect_interval_secs: u64,
     pub cookie_refresh_interval_secs: u64,
@@ -26,6 +28,7 @@ impl Default for AppSettings {
         Self {
             download_dir: project_root().display().to_string(),
             course_scope: "all".to_string(),
+            course_download_subdirs: std::collections::BTreeMap::new(),
             auth_check_interval_secs: DEFAULT_AUTH_CHECK_INTERVAL_SECS,
             collect_interval_secs: DEFAULT_COLLECT_INTERVAL_SECS,
             cookie_refresh_interval_secs: DEFAULT_COOKIE_REFRESH_INTERVAL_SECS,
@@ -87,6 +90,20 @@ fn normalize_settings(settings: &mut AppSettings) {
         _ => "all".to_string(),
     };
 
+    settings.course_download_subdirs = settings
+        .course_download_subdirs
+        .iter()
+        .filter_map(|(course_id, relative_dir)| {
+            let normalized_key = course_id.trim();
+            let normalized_value = normalize_relative_subdir(relative_dir);
+            if normalized_key.is_empty() || normalized_value.is_empty() {
+                return None;
+            }
+
+            Some((normalized_key.to_string(), normalized_value))
+        })
+        .collect();
+
     settings.auth_check_interval_secs =
         normalize_interval_secs(settings.auth_check_interval_secs, DEFAULT_AUTH_CHECK_INTERVAL_SECS);
     settings.collect_interval_secs =
@@ -103,6 +120,41 @@ fn normalize_interval_secs(value: u64, default_value: u64) -> u64 {
     } else {
         value
     }
+}
+
+fn normalize_relative_subdir(value: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+
+    let candidate = trimmed.replace('\\', "/");
+    let path = Path::new(&candidate);
+    if path.is_absolute() {
+        return String::new();
+    }
+
+    let mut segments = Vec::new();
+    for component in path.components() {
+        match component {
+            Component::Normal(part) => {
+                let segment = part.to_string_lossy().trim().to_string();
+                if segment.is_empty() {
+                    continue;
+                }
+                if segment.contains(':') {
+                    return String::new();
+                }
+                segments.push(segment);
+            }
+            Component::CurDir => {}
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                return String::new();
+            }
+        }
+    }
+
+    segments.join("/")
 }
 
 fn write_app_settings(settings: &AppSettings) -> Result<(), String> {

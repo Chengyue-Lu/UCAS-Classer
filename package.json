@@ -12,6 +12,7 @@
     "auth:open-url": "tsx automation/auth/open-authenticated-url.ts",
     "lab:login:hidden:sep": "tsx tests/login-lab/hidden-sep-login.ts",
     "download:file": "tsx automation/downloads/download-file.ts",
+    "download:batch": "tsx automation/downloads/download-batch.ts",
     "courses:collect": "tsx automation/request-course-list/run-course-list.ts",
     "collect:all": "tsx automation/request-collectors/run-full-collect.ts",
     "runtime:watch": "cargo run --quiet --manifest-path src-tauri/Cargo.toml --bin runtime_cli -- watch",
