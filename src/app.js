@@ -14,6 +14,7 @@ const modalActions = document.querySelector('#modal-actions')
 const modalFeedback = document.querySelector('#modal-feedback')
 const modalBody = document.querySelector('#modal-body')
 const modalClose = document.querySelector('#modal-close')
+const modalPanel = document.querySelector('.modal-panel')
 
 const state = {
   runtime: null,
@@ -26,6 +27,9 @@ const state = {
   settings: {
     downloadDir: '',
     courseScope: 'all',
+    authCheckIntervalSecs: 180,
+    collectIntervalSecs: 3600,
+    cookieRefreshIntervalSecs: 3600,
   },
   activeAction: null,
   modalOpen: false,
@@ -57,7 +61,7 @@ function createFallbackRuntimeSnapshot() {
 }
 
 function getTauriInvoke() {
-  return window.__TAURI_INTERNALS__?.invoke ?? null
+  return window.__TAURI_INTERNALS__?.invoke ?? window.__TAURI__?.core?.invoke ?? null
 }
 
 async function invokeTauriCommand(command, args = {}) {
@@ -69,8 +73,43 @@ async function invokeTauriCommand(command, args = {}) {
   return invoke(command, args)
 }
 
+async function waitForTauriInvoke(timeoutMs = 4000) {
+  const startedAt = Date.now()
+
+  while (Date.now() - startedAt < timeoutMs) {
+    const invoke = getTauriInvoke()
+    if (invoke) {
+      return invoke
+    }
+
+    await new Promise((resolve) => {
+      window.setTimeout(resolve, 50)
+    })
+  }
+
+  return null
+}
+
 function formatCount(value) {
   return String(Number(value) || 0).padStart(2, '0')
+}
+
+function intervalSecsToMinutes(value, fallbackMinutes) {
+  const seconds = Number(value)
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    return String(fallbackMinutes)
+  }
+
+  return String(Math.max(1, Math.round(seconds / 60)))
+}
+
+function intervalMinutesToSecs(value, fallbackSeconds) {
+  const minutes = Number(value)
+  if (!Number.isFinite(minutes) || minutes <= 0) {
+    return fallbackSeconds
+  }
+
+  return Math.max(1, Math.round(minutes)) * 60
 }
 
 function formatRelativeTime(timestamp) {
@@ -531,12 +570,54 @@ function setModalFeedback(message, tone = 'neutral') {
 }
 
 function resetModal() {
+  modalPanel.dataset.layout = 'default'
   modalKind.textContent = '详情'
   modalTitle.textContent = '详情'
   modalMeta.replaceChildren()
   modalActions.replaceChildren()
   modalBody.replaceChildren()
   setModalFeedback('')
+}
+
+function getCourseScopeLabelLegacy(scope) {
+  if (scope === 'current') {
+    return '当前学期'
+  }
+
+  if (scope === 'past') {
+    return '历史学期'
+  }
+
+  return '全部'
+}
+
+function createSettingsMetaLegacy(settings) {
+  const downloadChip = createDetailChip('下载目录', settings.downloadDir || '未设置')
+  downloadChip.classList.add('detail-chip--wide')
+
+  const summaryRow = document.createElement('div')
+  summaryRow.className = 'settings-meta-row'
+  summaryRow.append(
+    createDetailChip('课程范围', getCourseScopeLabel(settings.courseScope)),
+    createDetailChip(
+      'Check',
+      `${Math.max(1, Math.round((settings.authCheckIntervalSecs || 180) / 60))} m`,
+    ),
+    createDetailChip(
+      'Collect',
+      `${Math.max(1, Math.round((settings.collectIntervalSecs || 3600) / 60))} m`,
+    ),
+    createDetailChip(
+      'Cookie',
+      `${Math.max(1, Math.round((settings.cookieRefreshIntervalSecs || 3600) / 60))} m`,
+    ),
+  )
+
+  return [downloadChip, summaryRow]
+}
+
+function syncSettingsMeta(settings) {
+  modalMeta.replaceChildren(...createSettingsMeta(settings))
 }
 
 async function downloadResource({ url, suggestedName, referer }) {
@@ -664,7 +745,7 @@ function openDetailModal(kind, course, item) {
     if (item.workUrl) {
       modalActions.append(
         createDetailAction('打开作业入口', () => {
-          openExternalUrl(item.workUrl)
+          openAuthenticatedUrl(item.workUrl)
         }),
       )
     }
@@ -721,6 +802,18 @@ function openSettingsModal(feedbackMessage = '') {
           ? '以前学期'
           : '全部',
     ),
+    createDetailChip(
+      'Check 间隔',
+      `${Math.max(1, Math.round((state.settings.authCheckIntervalSecs || 180) / 60))} 分钟`,
+    ),
+    createDetailChip(
+      'Collect 间隔',
+      `${Math.max(1, Math.round((state.settings.collectIntervalSecs || 3600) / 60))} 分钟`,
+    ),
+    createDetailChip(
+      'Cookie 刷新',
+      `${Math.max(1, Math.round((state.settings.cookieRefreshIntervalSecs || 3600) / 60))} 分钟`,
+    ),
   )
 
   const settingsForm = document.createElement('div')
@@ -730,6 +823,39 @@ function openSettingsModal(feedbackMessage = '') {
     fieldName: 'downloadDir',
     placeholder: '例如: D:\\Downloads\\UCAS Classer',
   })
+  const authCheckField = createSettingsField(
+    'Check 间隔（分钟）',
+    intervalSecsToMinutes(state.settings.authCheckIntervalSecs, 3),
+    {
+      fieldName: 'authCheckIntervalSecs',
+      placeholder: '默认 3',
+    },
+  )
+  authCheckField.control.type = 'number'
+  authCheckField.control.min = '1'
+
+  const collectField = createSettingsField(
+    'Collect 间隔（分钟）',
+    intervalSecsToMinutes(state.settings.collectIntervalSecs, 60),
+    {
+      fieldName: 'collectIntervalSecs',
+      placeholder: '默认 60',
+    },
+  )
+  collectField.control.type = 'number'
+  collectField.control.min = '1'
+
+  const cookieRefreshField = createSettingsField(
+    'Cookie 刷新间隔（分钟）',
+    intervalSecsToMinutes(state.settings.cookieRefreshIntervalSecs, 60),
+    {
+      fieldName: 'cookieRefreshIntervalSecs',
+      placeholder: '默认 60',
+    },
+  )
+  cookieRefreshField.control.type = 'number'
+  cookieRefreshField.control.min = '1'
+
   const scopeField = document.createElement('div')
   scopeField.className = 'settings-field'
   scopeField.append(
@@ -766,7 +892,13 @@ function openSettingsModal(feedbackMessage = '') {
 
   renderScopeButtons()
   scopeField.append(scopeToggle)
-  settingsForm.append(downloadField.field, scopeField)
+  settingsForm.append(
+    downloadField.field,
+    authCheckField.field,
+    collectField.field,
+    cookieRefreshField.field,
+    scopeField,
+  )
   modalBody.append(settingsForm)
 
   modalActions.append(
@@ -777,6 +909,12 @@ function openSettingsModal(feedbackMessage = '') {
           ...state.settings,
           downloadDir: downloadField.control.value.trim(),
           courseScope: selectedScope,
+          authCheckIntervalSecs: intervalMinutesToSecs(authCheckField.control.value, 180),
+          collectIntervalSecs: intervalMinutesToSecs(collectField.control.value, 3600),
+          cookieRefreshIntervalSecs: intervalMinutesToSecs(
+            cookieRefreshField.control.value,
+            3600,
+          ),
         }
 
         try {
@@ -800,7 +938,241 @@ function openSettingsModal(feedbackMessage = '') {
                   ? '以前学期'
                   : '全部',
             ),
+            createDetailChip(
+              'Check 间隔',
+              `${Math.max(1, Math.round((state.settings.authCheckIntervalSecs || 180) / 60))} 分钟`,
+            ),
+            createDetailChip(
+              'Collect 间隔',
+              `${Math.max(1, Math.round((state.settings.collectIntervalSecs || 3600) / 60))} 分钟`,
+            ),
+            createDetailChip(
+              'Cookie 刷新',
+              `${Math.max(1, Math.round((state.settings.cookieRefreshIntervalSecs || 3600) / 60))} 分钟`,
+            ),
           )
+          renderCourses()
+          setModalFeedback('设置已保存。', 'success')
+        } catch (error) {
+          setModalFeedback(String(error), 'error')
+        }
+      },
+      { primary: true },
+    ),
+  )
+
+  if (feedbackMessage) {
+    setModalFeedback(feedbackMessage, 'warning')
+  }
+
+  modalOverlay.hidden = false
+  appShell.classList.add('app-shell--modal-open')
+  state.modalOpen = true
+}
+
+function getCourseScopeLabel(scope) {
+  if (scope === 'current') {
+    return '当前学期'
+  }
+
+  if (scope === 'past') {
+    return '以前学期'
+  }
+
+  return '全部'
+}
+
+function createSettingsMeta(settings) {
+  const downloadChip = createDetailChip('下载目录', settings.downloadDir || '未设置')
+  downloadChip.classList.add('detail-chip--wide')
+
+  const summaryRow = document.createElement('div')
+  summaryRow.className = 'settings-meta-row'
+  summaryRow.append(
+    createDetailChip('范围', getCourseScopeLabel(settings.courseScope)),
+    createDetailChip(
+      'Check',
+      `${Math.max(1, Math.round((settings.authCheckIntervalSecs || 180) / 60))} 分钟`,
+    ),
+    createDetailChip(
+      'Collect',
+      `${Math.max(1, Math.round((settings.collectIntervalSecs || 3600) / 60))} 分钟`,
+    ),
+    createDetailChip(
+      'Cookie',
+      `${Math.max(1, Math.round((settings.cookieRefreshIntervalSecs || 3600) / 60))} 分钟`,
+    ),
+  )
+
+  return [downloadChip, summaryRow]
+}
+
+function syncSettingsMetaLegacy(settings) {
+  modalMeta.replaceChildren(...createSettingsMetaLegacy(settings))
+}
+
+function openSettingsModalLegacy(feedbackMessage = '') {
+  state.modalType = 'settings'
+  resetModal()
+  modalPanel.dataset.layout = 'settings'
+
+  modalKind.textContent = 'Settings'
+  modalTitle.textContent = '应用设置'
+  syncSettingsMeta(state.settings)
+
+  const settingsForm = document.createElement('div')
+  settingsForm.className = 'settings-form'
+
+  const downloadField = createSettingsField('下载目录', state.settings.downloadDir, {
+    fieldName: 'downloadDir',
+    placeholder: '例如: D:\\Downloads\\UCAS Classer',
+  })
+
+  const authCheckField = createSettingsField(
+    'Check',
+    intervalSecsToMinutes(state.settings.authCheckIntervalSecs, 3),
+    {
+      fieldName: 'authCheckIntervalSecs',
+      placeholder: '3',
+    },
+  )
+  authCheckField.field.classList.add('settings-field--compact')
+  authCheckField.control.type = 'number'
+  authCheckField.control.min = '1'
+
+  const collectField = createSettingsField(
+    'Collect',
+    intervalSecsToMinutes(state.settings.collectIntervalSecs, 60),
+    {
+      fieldName: 'collectIntervalSecs',
+      placeholder: '60',
+    },
+  )
+  collectField.field.classList.add('settings-field--compact')
+  collectField.control.type = 'number'
+  collectField.control.min = '1'
+
+  const cookieRefreshField = createSettingsField(
+    'Cookie',
+    intervalSecsToMinutes(state.settings.cookieRefreshIntervalSecs, 60),
+    {
+      fieldName: 'cookieRefreshIntervalSecs',
+      placeholder: '60',
+    },
+  )
+  cookieRefreshField.field.classList.add('settings-field--compact')
+  cookieRefreshField.control.type = 'number'
+  cookieRefreshField.control.min = '1'
+
+  const scopeField = document.createElement('div')
+  scopeField.className = 'settings-field'
+  scopeField.append(
+    Object.assign(document.createElement('span'), {
+      className: 'settings-field__label',
+      textContent: '课程范围',
+    }),
+  )
+
+  const scopeToggle = document.createElement('div')
+  scopeToggle.className = 'settings-scope-toggle'
+  const scopeOptions = [
+    { value: 'all', label: '全部' },
+    { value: 'current', label: '当前学期' },
+    { value: 'past', label: '以前学期' },
+  ]
+  let selectedScope = state.settings.courseScope || 'all'
+  let scopeSaving = false
+
+  const renderScopeButtons = () => {
+    scopeToggle.replaceChildren()
+    scopeOptions.forEach((option) => {
+      const button = document.createElement('button')
+      button.className = 'settings-scope-toggle__button'
+      button.type = 'button'
+      button.dataset.active = String(selectedScope === option.value)
+      button.textContent = option.label
+      button.disabled = scopeSaving
+      button.addEventListener('click', async () => {
+        if (scopeSaving || selectedScope === option.value) {
+          return
+        }
+
+        const previousScope = state.settings.courseScope || 'all'
+        selectedScope = option.value
+        scopeSaving = true
+        renderScopeButtons()
+
+        try {
+          const saved = await invokeTauriCommand('save_app_settings', {
+            settings: {
+              ...state.settings,
+              courseScope: option.value,
+            },
+          })
+
+          if (!saved) {
+            selectedScope = previousScope
+            setModalFeedback('当前不在 Tauri 环境内，无法保存课程范围。', 'error')
+            return
+          }
+
+          state.settings = saved
+          selectedScope = saved.courseScope || option.value
+          syncSettingsMeta(state.settings)
+          renderCourses()
+          setModalFeedback('课程范围已更新。', 'success')
+        } catch (error) {
+          selectedScope = previousScope
+          setModalFeedback(String(error), 'error')
+        } finally {
+          scopeSaving = false
+          renderScopeButtons()
+        }
+      })
+      scopeToggle.append(button)
+    })
+  }
+
+  renderScopeButtons()
+  scopeField.append(scopeToggle)
+
+  const intervalRow = document.createElement('div')
+  intervalRow.className = 'settings-inline-row'
+  intervalRow.append(authCheckField.field, collectField.field, cookieRefreshField.field)
+
+  settingsForm.append(downloadField.field, scopeField, intervalRow)
+  modalBody.append(settingsForm)
+
+  modalActions.append(
+    createDetailAction(
+      '保存设置',
+      async () => {
+        const nextSettings = {
+          ...state.settings,
+          downloadDir: downloadField.control.value.trim(),
+          courseScope: state.settings.courseScope || selectedScope,
+          authCheckIntervalSecs: intervalMinutesToSecs(authCheckField.control.value, 180),
+          collectIntervalSecs: intervalMinutesToSecs(collectField.control.value, 3600),
+          cookieRefreshIntervalSecs: intervalMinutesToSecs(
+            cookieRefreshField.control.value,
+            3600,
+          ),
+        }
+
+        try {
+          const saved = await invokeTauriCommand('save_app_settings', {
+            settings: nextSettings,
+          })
+
+          if (!saved) {
+            setModalFeedback('当前不在 Tauri 环境内，无法保存设置。', 'error')
+            return
+          }
+
+          state.settings = saved
+          selectedScope = state.settings.courseScope || selectedScope
+          syncSettingsMeta(state.settings)
+          renderScopeButtons()
           renderCourses()
           setModalFeedback('设置已保存。', 'success')
         } catch (error) {
@@ -1013,6 +1385,18 @@ async function initialize() {
   bindModalControls()
   bindTitleOverflowRefresh()
   closeDetailModal()
+
+  const invoke = await waitForTauriInvoke()
+  if (!invoke) {
+    state.runtime = createFallbackRuntimeSnapshot()
+    syncRuntimePanel()
+    const errorNode = document.querySelector('#runtime-error')
+    if (errorNode) {
+      errorNode.hidden = false
+      errorNode.textContent = 'Tauri bridge unavailable'
+    }
+    return
+  }
 
   await Promise.all([loadSettings(), initializeRuntime()])
   await Promise.all([refreshRuntimeStatus(), loadDashboardData()])

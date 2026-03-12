@@ -853,6 +853,10 @@ select {
   box-shadow: 0 24px 60px rgba(20, 32, 43, 0.22);
 }
 
+.modal-panel[data-layout='settings'] {
+  height: 540px;
+}
+
 .modal-panel__header {
   display: flex;
   align-items: flex-start;
@@ -926,6 +930,12 @@ select {
   background: rgba(244, 240, 232, 0.72);
   font-size: 12px;
   color: var(--muted);
+}
+
+.detail-chip--wide {
+  width: 100%;
+  justify-content: space-between;
+  border-radius: 14px;
 }
 
 .detail-chip strong {
@@ -1028,7 +1038,28 @@ select {
 .settings-form {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
+}
+
+.settings-meta-row {
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.settings-meta-row .detail-chip {
+  width: 100%;
+  min-width: 0;
+  justify-content: center;
+  padding: 0 8px;
+}
+
+.settings-inline-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  align-items: start;
 }
 
 .settings-scope-toggle {
@@ -1038,7 +1069,7 @@ select {
 }
 
 .settings-scope-toggle__button {
-  min-height: 38px;
+  min-height: 34px;
   padding: 0 8px;
   border: 1px solid var(--line);
   border-radius: 12px;
@@ -1067,25 +1098,35 @@ select {
 .settings-field {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
 }
 
 .settings-field__label {
-  font-size: 12px;
-  letter-spacing: 0.08em;
+  font-size: 11px;
+  letter-spacing: 0.07em;
   text-transform: uppercase;
   color: var(--muted);
 }
 
 .settings-field__control {
   width: 100%;
-  min-height: 42px;
-  padding: 10px 12px;
+  min-height: 36px;
+  padding: 7px 10px;
   border: 1px solid var(--line);
   border-radius: 12px;
   background: rgba(255, 252, 247, 0.95);
   color: var(--text);
   resize: vertical;
+}
+
+.settings-field--compact .settings-field__label {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+}
+
+.settings-field--compact .settings-field__control {
+  min-height: 34px;
+  padding: 6px 9px;
 }
 
 .settings-field__control:disabled {

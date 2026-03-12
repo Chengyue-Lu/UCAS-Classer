@@ -17,6 +17,7 @@ tests/
 *.db
 *.sqlite
 *.sqlite3
+*.lnk
 
 .DS_Store
 Thumbs.db

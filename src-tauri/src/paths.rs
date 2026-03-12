@@ -24,6 +24,10 @@ pub fn app_settings_file() -> PathBuf {
     data_dir().join("app-settings.json")
 }
 
+pub fn runtime_state_file() -> PathBuf {
+    data_dir().join("runtime-state.json")
+}
+
 pub fn cache_dir() -> PathBuf {
     data_dir().join("cache")
 }

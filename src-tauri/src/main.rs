@@ -1,6 +1,11 @@
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
 
-use tauri::{State, Window};
+use tauri::{
+    menu::MenuBuilder,
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    AppHandle, Manager, RunEvent, State, WebviewUrl, WebviewWindowBuilder, Window, WindowEvent,
+};
 use ucas_classer::app_data::{load_dashboard_data as load_dashboard_data_impl, DashboardData};
 use ucas_classer::app_settings::{
     load_app_settings as load_app_settings_impl, save_app_settings as save_app_settings_impl,
@@ -8,6 +13,7 @@ use ucas_classer::app_settings::{
 };
 use ucas_classer::auth_runtime::{
     acknowledge_hourly_refresh_due as acknowledge_hourly_refresh_due_impl,
+    apply_runtime_settings as apply_runtime_settings_impl,
     clear_db_import_due as clear_db_import_due_impl,
     clear_collect_refresh_due as clear_collect_refresh_due_impl,
     get_runtime_status as get_runtime_status_impl,
@@ -29,6 +35,82 @@ use ucas_classer::downloads::{
 };
 use ucas_classer::script_runner::spawn_hidden_background_script;
 
+struct ExitGuard(AtomicBool);
+
+fn create_main_window(app: &AppHandle) -> Result<(), String> {
+    let mut builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+        .title("UCAS Classer")
+        .inner_size(480.0, 720.0)
+        .min_inner_size(480.0, 720.0)
+        .decorations(false)
+        .resizable(true);
+
+    if let Some(icon) = app.default_window_icon().cloned() {
+        builder = builder.icon(icon).map_err(|error| error.to_string())?;
+    }
+
+    let window = builder.build().map_err(|error| error.to_string())?;
+    window.set_focus().map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+fn show_main_window(app: &AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("main") {
+        window.show().map_err(|error| error.to_string())?;
+        if window.is_minimized().map_err(|error| error.to_string())? {
+            let _ = window.unminimize();
+        }
+        window.set_focus().map_err(|error| error.to_string())?;
+        return Ok(());
+    }
+
+    create_main_window(app)
+}
+
+fn destroy_main_window(window: &Window) -> Result<(), String> {
+    window.destroy().map_err(|error| error.to_string())
+}
+
+fn build_tray(app: &AppHandle) -> Result<(), String> {
+    let menu = MenuBuilder::new(app)
+        .text("show", "显示主窗口")
+        .text("quit", "退出应用")
+        .build()
+        .map_err(|error| error.to_string())?;
+
+    let mut builder = TrayIconBuilder::with_id("main-tray")
+        .menu(&menu)
+        .tooltip("UCAS Classer")
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, event| match event.id().as_ref() {
+            "show" => {
+                let _ = show_main_window(app);
+            }
+            "quit" => {
+                app.state::<ExitGuard>().0.store(true, Ordering::Relaxed);
+                app.exit(0);
+            }
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                let _ = show_main_window(tray.app_handle());
+            }
+        });
+
+    if let Some(icon) = app.default_window_icon().cloned() {
+        builder = builder.icon(icon);
+    }
+
+    builder.build(app).map_err(|error| error.to_string())?;
+    Ok(())
+}
+
 #[tauri::command]
 fn load_dashboard_data() -> Result<DashboardData, String> {
     load_dashboard_data_impl()
@@ -40,8 +122,13 @@ fn load_app_settings() -> Result<AppSettings, String> {
 }
 
 #[tauri::command]
-fn save_app_settings(settings: AppSettings) -> Result<AppSettings, String> {
-    save_app_settings_impl(settings)
+async fn save_app_settings(
+    settings: AppSettings,
+    runtime: State<'_, SharedRuntimeService>,
+) -> Result<AppSettings, String> {
+    let saved = save_app_settings_impl(settings)?;
+    let _ = apply_runtime_settings_impl(runtime).await?;
+    Ok(saved)
 }
 
 #[tauri::command]
@@ -63,6 +150,13 @@ async fn stop_runtime_scheduler(
     runtime: State<'_, SharedRuntimeService>,
 ) -> Result<RuntimeSnapshot, String> {
     stop_runtime_scheduler_impl(runtime).await
+}
+
+#[tauri::command]
+async fn apply_runtime_settings(
+    runtime: State<'_, SharedRuntimeService>,
+) -> Result<RuntimeSnapshot, String> {
+    apply_runtime_settings_impl(runtime).await
 }
 
 #[tauri::command]
@@ -156,7 +250,7 @@ fn window_minimize(window: Window) -> Result<(), String> {
 
 #[tauri::command]
 fn window_close(window: Window) -> Result<(), String> {
-    window.close().map_err(|error| error.to_string())
+    destroy_main_window(&window)
 }
 
 #[tauri::command]
@@ -196,6 +290,19 @@ fn download_protected_file(
 fn main() {
     tauri::Builder::default()
         .manage(RuntimeService::new())
+        .manage(ExitGuard(AtomicBool::new(false)))
+        .setup(|app| {
+            build_tray(app.handle())?;
+            Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() == "main" {
+                    api.prevent_close();
+                    let _ = destroy_main_window(window);
+                }
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             load_dashboard_data,
             load_app_settings,
@@ -203,6 +310,7 @@ fn main() {
             get_runtime_status,
             start_runtime_scheduler,
             stop_runtime_scheduler,
+            apply_runtime_settings,
             run_auth_check,
             run_explicit_auth_check,
             run_interrupt_login,
@@ -221,6 +329,13 @@ fn main() {
             open_authenticated_url,
             download_protected_file,
         ])
-        .run(tauri::generate_context!())
-        .expect("failed to run tauri application");
+        .build(tauri::generate_context!())
+        .expect("failed to build tauri application")
+        .run(|app, event| {
+            if let RunEvent::ExitRequested { api, .. } = event {
+                if !app.state::<ExitGuard>().0.load(Ordering::Relaxed) {
+                    api.prevent_exit();
+                }
+            }
+        });
 }

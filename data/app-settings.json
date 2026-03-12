@@ -1,4 +1,10 @@
 {
   "downloadDir": "D:\\Downloads",
-  "courseScope": "current"
+  "courseScope": "current",
+  "authCheckIntervalSecs": 10800,
+  "collectIntervalSecs": 60,
+  "cookieRefreshIntervalSecs": 86400,
+  "lastAuthCheckAtMs": 1773292812768,
+  "lastCollectFinishedAtMs": 1773292818091,
+  "lastCookieRefreshAtMs": null
 }

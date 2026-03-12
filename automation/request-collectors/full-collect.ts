@@ -13,6 +13,7 @@ import {
   collectRequestMaterials,
   createRequestContext,
   extractAssignments,
+  fillPendingAssignmentWorkUrls,
   extractNotices,
   fetchHtml,
   fillNoticeDetails,
@@ -222,6 +223,7 @@ async function collectAssignmentSnapshot(
     `assignment-list-${modules.courseId}`,
   )
   const items = extractAssignments(fetch.bodyText, fetch.finalUrl)
+  await fillPendingAssignmentWorkUrls(apiContext, items, fetch.bodyText, fetch.finalUrl)
 
   return {
     collectedAt: new Date().toISOString(),

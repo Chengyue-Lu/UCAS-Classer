@@ -13,6 +13,7 @@
     "auth:check:headed": "tsx automation/auth/check-auth.ts --headed",
     "auth:open-url": "tsx automation/auth/open-authenticated-url.ts",
     "webcheck": "tsx automation/auth/webcheck.ts",
+    "lab:login:hidden:sep": "tsx tests/login-lab/hidden-sep-login.ts",
     "download:file": "tsx automation/downloads/download-file.ts",
     "courses:collect": "tsx automation/request-course-list/run-course-list.ts",
     "collect:all": "tsx automation/request-collectors/run-full-collect.ts",

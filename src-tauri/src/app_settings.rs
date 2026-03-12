@@ -4,11 +4,21 @@ use serde::{Deserialize, Serialize};
 
 use crate::paths::{app_settings_file, data_dir, project_root};
 
+const DEFAULT_AUTH_CHECK_INTERVAL_SECS: u64 = 3 * 60;
+const DEFAULT_COLLECT_INTERVAL_SECS: u64 = 60 * 60;
+const DEFAULT_COOKIE_REFRESH_INTERVAL_SECS: u64 = 60 * 60;
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct AppSettings {
     pub download_dir: String,
     pub course_scope: String,
+    pub auth_check_interval_secs: u64,
+    pub collect_interval_secs: u64,
+    pub cookie_refresh_interval_secs: u64,
+    pub last_auth_check_at_ms: Option<u64>,
+    pub last_collect_finished_at_ms: Option<u64>,
+    pub last_cookie_refresh_at_ms: Option<u64>,
 }
 
 impl Default for AppSettings {
@@ -16,6 +26,12 @@ impl Default for AppSettings {
         Self {
             download_dir: project_root().display().to_string(),
             course_scope: "all".to_string(),
+            auth_check_interval_secs: DEFAULT_AUTH_CHECK_INTERVAL_SECS,
+            collect_interval_secs: DEFAULT_COLLECT_INTERVAL_SECS,
+            cookie_refresh_interval_secs: DEFAULT_COOKIE_REFRESH_INTERVAL_SECS,
+            last_auth_check_at_ms: None,
+            last_collect_finished_at_ms: None,
+            last_cookie_refresh_at_ms: None,
         }
     }
 }
@@ -33,11 +49,31 @@ pub fn load_app_settings() -> Result<AppSettings, String> {
         )
     })?;
 
-    serde_json::from_str::<AppSettings>(&contents)
-        .map_err(|error| format!("failed to parse app settings `{}`: {error}", settings_path.display()))
+    let mut settings = serde_json::from_str::<AppSettings>(&contents)
+        .map_err(|error| format!("failed to parse app settings `{}`: {error}", settings_path.display()))?;
+    normalize_settings(&mut settings);
+    Ok(settings)
 }
 
 pub fn save_app_settings(mut settings: AppSettings) -> Result<AppSettings, String> {
+    normalize_settings(&mut settings);
+    write_app_settings(&settings)?;
+    Ok(settings)
+}
+
+pub fn persist_runtime_markers(
+    last_auth_check_at_ms: Option<u64>,
+    last_collect_finished_at_ms: Option<u64>,
+    last_cookie_refresh_at_ms: Option<u64>,
+) -> Result<(), String> {
+    let mut settings = load_app_settings().unwrap_or_default();
+    settings.last_auth_check_at_ms = last_auth_check_at_ms;
+    settings.last_collect_finished_at_ms = last_collect_finished_at_ms;
+    settings.last_cookie_refresh_at_ms = last_cookie_refresh_at_ms;
+    write_app_settings(&settings)
+}
+
+fn normalize_settings(settings: &mut AppSettings) {
     let trimmed_download_dir = settings.download_dir.trim();
     settings.download_dir = if trimmed_download_dir.is_empty() {
         project_root().display().to_string()
@@ -51,10 +87,29 @@ pub fn save_app_settings(mut settings: AppSettings) -> Result<AppSettings, Strin
         _ => "all".to_string(),
     };
 
+    settings.auth_check_interval_secs =
+        normalize_interval_secs(settings.auth_check_interval_secs, DEFAULT_AUTH_CHECK_INTERVAL_SECS);
+    settings.collect_interval_secs =
+        normalize_interval_secs(settings.collect_interval_secs, DEFAULT_COLLECT_INTERVAL_SECS);
+    settings.cookie_refresh_interval_secs = normalize_interval_secs(
+        settings.cookie_refresh_interval_secs,
+        DEFAULT_COOKIE_REFRESH_INTERVAL_SECS,
+    );
+}
+
+fn normalize_interval_secs(value: u64, default_value: u64) -> u64 {
+    if value == 0 {
+        default_value
+    } else {
+        value
+    }
+}
+
+fn write_app_settings(settings: &AppSettings) -> Result<(), String> {
     fs::create_dir_all(data_dir())
         .map_err(|error| format!("failed to create data dir `{}`: {error}", data_dir().display()))?;
 
-    let contents = serde_json::to_string_pretty(&settings)
+    let contents = serde_json::to_string_pretty(settings)
         .map_err(|error| format!("failed to serialize app settings: {error}"))?;
 
     let settings_path = app_settings_file();
@@ -65,5 +120,5 @@ pub fn save_app_settings(mut settings: AppSettings) -> Result<AppSettings, Strin
         )
     })?;
 
-    Ok(settings)
+    Ok(())
 }

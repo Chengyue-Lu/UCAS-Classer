@@ -10,12 +10,10 @@ use tokio::spawn;
 use tokio::task::spawn_blocking;
 use tokio::time::sleep;
 
+use crate::app_settings::{load_app_settings, persist_runtime_markers};
 use crate::db_import::{import_latest_cache, last_imported_collect_finished_at, latest_collect_finished_at};
 use crate::paths::storage_state_file;
 use crate::script_runner::{run_hidden_script, run_visible_login_script, storage_state_modified_ms, ScriptOutput};
-
-const DEFAULT_THREE_MIN_INTERVAL_SECS: u64 = 3 * 60;
-const DEFAULT_ONE_HOUR_INTERVAL_SECS: u64 = 60 * 60;
 
 pub type SharedRuntimeService = Arc<RuntimeService>;
 
@@ -37,6 +35,7 @@ pub struct RuntimeSnapshot {
     pub db_import_running: bool,
     pub three_min_interval_secs: u64,
     pub one_hour_interval_secs: u64,
+    pub collect_interval_secs: u64,
     pub last_three_min_tick_at_ms: Option<u64>,
     pub last_hourly_tick_at_ms: Option<u64>,
     pub last_auth_check_at_ms: Option<u64>,
@@ -64,6 +63,7 @@ pub struct RuntimeSnapshot {
 
 impl Default for RuntimeSnapshot {
     fn default() -> Self {
+        let settings = load_app_settings().unwrap_or_default();
         Self {
             scheduler_running: false,
             interrupt_flag: false,
@@ -81,15 +81,16 @@ impl Default for RuntimeSnapshot {
             db_import_running: false,
             three_min_interval_secs: configured_interval_secs(
                 "UCAS_AUTH_CHECK_INTERVAL_SECS",
-                DEFAULT_THREE_MIN_INTERVAL_SECS,
+                settings.auth_check_interval_secs,
             ),
             one_hour_interval_secs: configured_interval_secs(
                 "UCAS_HOURLY_INTERVAL_SECS",
-                DEFAULT_ONE_HOUR_INTERVAL_SECS,
+                settings.cookie_refresh_interval_secs,
             ),
+            collect_interval_secs: settings.collect_interval_secs.max(1),
             last_three_min_tick_at_ms: None,
             last_hourly_tick_at_ms: None,
-            last_auth_check_at_ms: None,
+            last_auth_check_at_ms: settings.last_auth_check_at_ms,
             last_auth_check_ok: None,
             last_auth_check_source: None,
             last_storage_mtime_ms: storage_state_modified_ms(storage_state_file()),
@@ -97,10 +98,10 @@ impl Default for RuntimeSnapshot {
             last_login_started_at_ms: None,
             last_login_finished_at_ms: None,
             last_interrupt_cleared_at_ms: None,
-            last_cookie_refresh_at_ms: None,
+            last_cookie_refresh_at_ms: settings.last_cookie_refresh_at_ms,
             last_collect_due_at_ms: None,
             last_collect_started_at_ms: None,
-            last_collect_finished_at_ms: None,
+            last_collect_finished_at_ms: settings.last_collect_finished_at_ms,
             last_collect_ok: None,
             last_db_import_due_at_ms: None,
             last_db_import_started_at_ms: None,
@@ -154,7 +155,13 @@ impl RuntimeService {
     {
         let mut snapshot = self.snapshot.lock().expect("snapshot lock poisoned");
         updater(&mut snapshot);
-        snapshot.clone()
+        let cloned = snapshot.clone();
+        let _ = persist_runtime_markers(
+            cloned.last_auth_check_at_ms,
+            cloned.last_collect_finished_at_ms,
+            cloned.last_cookie_refresh_at_ms,
+        );
+        cloned
     }
 
     fn set_interrupt(&self, reason: String) {
@@ -212,6 +219,12 @@ impl RuntimeService {
         self.update(|snapshot| {
             snapshot.last_hourly_tick_at_ms = Some(now);
             snapshot.hourly_refresh_due = true;
+        });
+    }
+
+    fn mark_collect_due(&self) {
+        let now = now_ms();
+        self.update(|snapshot| {
             snapshot.collect_refresh_due = true;
             snapshot.last_collect_due_at_ms = Some(now);
         });
@@ -286,18 +299,19 @@ impl RuntimeService {
         Ok(due)
     }
 
+    fn can_run_scheduled_collect(&self) -> bool {
+        let snapshot = self.snapshot();
+        !snapshot.collect_refresh_running
+            && !snapshot.db_import_running
+            && !snapshot.interrupt_flag
+            && !snapshot.reset_running
+            && !snapshot.login_running
+            && snapshot.last_auth_check_ok == Some(true)
+    }
+
     fn maybe_spawn_collect_if_due(self: &Arc<Self>) -> bool {
         let snapshot = self.snapshot();
-        if !snapshot.collect_refresh_due
-            || snapshot.collect_refresh_running
-            || snapshot.db_import_running
-            || snapshot.interrupt_flag
-            || snapshot.auth_check_running
-            || snapshot.explicit_check_running
-            || snapshot.reset_running
-            || snapshot.login_running
-            || snapshot.last_auth_check_ok != Some(true)
-        {
+        if !snapshot.collect_refresh_due || !self.can_run_scheduled_collect() {
             return false;
         }
 
@@ -331,7 +345,6 @@ impl RuntimeService {
             || snapshot.explicit_check_running
             || snapshot.reset_running
             || snapshot.login_running
-            || snapshot.collect_refresh_running
     }
 
     async fn handle_three_min_tick(self: &Arc<Self>) {
@@ -351,10 +364,47 @@ impl RuntimeService {
 
     async fn handle_hourly_tick(self: &Arc<Self>) {
         self.mark_hourly_due();
-        let _ = self.maybe_spawn_collect_if_due();
+    }
+
+    async fn handle_collect_tick(self: &Arc<Self>) {
+        self.mark_collect_due();
+        if !self.can_run_scheduled_collect() {
+            return;
+        }
+
+        let service = Arc::clone(self);
+        spawn(async move {
+            let _ = service.run_full_collect().await;
+        });
+    }
+
+    pub fn apply_settings(self: &Arc<Self>) -> RuntimeSnapshot {
+        let settings = load_app_settings().unwrap_or_default();
+        let was_running = self.snapshot().scheduler_running;
+
+        self.update(|snapshot| {
+            snapshot.three_min_interval_secs = settings.auth_check_interval_secs.max(1);
+            snapshot.one_hour_interval_secs = settings.cookie_refresh_interval_secs.max(1);
+            snapshot.collect_interval_secs = settings.collect_interval_secs.max(1);
+        });
+
+        if was_running {
+            self.stop_scheduler();
+            self.start_scheduler_with_options(false, false)
+        } else {
+            self.snapshot()
+        }
     }
 
     pub fn start_scheduler(self: &Arc<Self>) -> RuntimeSnapshot {
+        self.start_scheduler_with_options(true, true)
+    }
+
+    fn start_scheduler_with_options(
+        self: &Arc<Self>,
+        run_initial_check: bool,
+        run_initial_collect: bool,
+    ) -> RuntimeSnapshot {
         let mut stop_guard = self.scheduler_stop.lock().expect("scheduler stop lock poisoned");
         if stop_guard.is_some() {
             return self.snapshot();
@@ -368,14 +418,19 @@ impl RuntimeService {
             snapshot.last_error = None;
         });
 
+        if run_initial_collect {
+            self.mark_collect_due();
+        }
+
         let _ = self.sync_db_import_due_from_cache();
         let _ = self.maybe_spawn_db_import_if_due();
 
         let intervals = self.snapshot();
         let three_min_interval_secs = intervals.three_min_interval_secs;
         let one_hour_interval_secs = intervals.one_hour_interval_secs;
+        let collect_interval_secs = intervals.collect_interval_secs;
 
-        if !self.should_skip_scheduled_check() {
+        if run_initial_check && !self.should_skip_scheduled_check() {
             let initial_check_service = Arc::clone(self);
             spawn(async move {
                 let _ = initial_check_service
@@ -397,16 +452,27 @@ impl RuntimeService {
         });
 
         let hourly_service = Arc::clone(self);
+        let hourly_stop = stop.clone();
         spawn(async move {
             loop {
                 sleep(Duration::from_secs(one_hour_interval_secs)).await;
-                if stop.load(Ordering::SeqCst) {
+                if hourly_stop.load(Ordering::SeqCst) {
                     break;
                 }
                 hourly_service.handle_hourly_tick().await;
             }
         });
 
+        let collect_service = Arc::clone(self);
+        spawn(async move {
+            loop {
+                sleep(Duration::from_secs(collect_interval_secs)).await;
+                if stop.load(Ordering::SeqCst) {
+                    break;
+                }
+                collect_service.handle_collect_tick().await;
+            }
+        });
         self.snapshot()
     }
 
@@ -432,8 +498,8 @@ impl RuntimeService {
                     .to_string(),
             );
         }
-        if self.snapshot().collect_refresh_running {
-            return Err("collect refresh is running; auth check is temporarily blocked".to_string());
+        if self.snapshot().reset_running || self.snapshot().login_running {
+            return Err("auth state is being reset or refreshed; auth check is temporarily blocked".to_string());
         }
         self.run_auth_check(CheckSource::Explicit, true).await?;
         Ok(self.snapshot())
@@ -461,8 +527,10 @@ impl RuntimeService {
                     .to_string(),
             );
         }
-        if !matches!(source, CheckSource::Recovery) && self.snapshot().collect_refresh_running {
-            return Err("collect refresh is running; auth check is temporarily blocked".to_string());
+        if !matches!(source, CheckSource::Recovery)
+            && (self.snapshot().reset_running || self.snapshot().login_running)
+        {
+            return Err("auth state is being reset or refreshed; auth check is temporarily blocked".to_string());
         }
 
         let started_at = now_ms();
@@ -825,6 +893,13 @@ pub async fn stop_runtime_scheduler(
     runtime: State<'_, SharedRuntimeService>,
 ) -> Result<RuntimeSnapshot, String> {
     Ok(runtime.inner().stop_scheduler())
+}
+
+#[tauri::command]
+pub async fn apply_runtime_settings(
+    runtime: State<'_, SharedRuntimeService>,
+) -> Result<RuntimeSnapshot, String> {
+    Ok(runtime.inner().apply_settings())
 }
 
 #[tauri::command]

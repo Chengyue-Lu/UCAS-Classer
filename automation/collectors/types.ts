@@ -142,6 +142,9 @@ export type AssignmentSummary = {
   startTime: string | null
   endTime: string | null
   rawText: string
+  workId?: string | null
+  workAnswerId?: string | null
+  reEdit?: string | null
 }
 
 export type AssignmentListSnapshot = {
