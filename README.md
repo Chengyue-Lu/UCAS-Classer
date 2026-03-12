@@ -40,3 +40,7 @@
 - `src-tauri/`：桌面端后端与数据库导入逻辑
 - `src/`：当前桌面前端
 - `docs/archive-plans/`：已完成的计划与阶段性文档
+
+## 开源协议
+
+[GNU GPLv3](./LICENSE)
