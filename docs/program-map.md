@@ -474,7 +474,43 @@ sequenceDiagram
 1. 不要直接删除 `src-tauri/src/main.rs` 中 UI 未用的 runtime command。
 2. 不要把 package 端漂移问题混入主仓“死代码删除”里一起处理。
 
-## 11. 本文结论
+## 11. 双端同步机制现状
+
+- 主仓现在是运行主线的唯一权威源码。
+- `ucasclasser-package/` 继续作为本地打包实验目录，不纳入 Git 跟踪。
+- 双端不再靠手工记忆同步，统一使用 `scripts/sync-package-runtime.mjs` 做单向下发。
+
+### 11.1 同步边界
+
+- `runtime-shared`
+  - `src/`
+  - `shared/runtime-paths.ts`
+  - `automation/request-*`
+  - `automation/downloads/*`
+  - `automation/shared/*`
+  - `automation/auth/{browser,check-api,config,login-and-save-sep,open-authenticated-url,paths,reset,utils}.ts`
+  - `src-tauri/src/{app_data,app_settings,auth_runtime,db_import,downloads,lib}.rs`
+- `package-shell`
+  - `ucasclasser-package/src-tauri/src/main.rs`
+  - `ucasclasser-package/src-tauri/src/paths.rs`
+  - `ucasclasser-package/src-tauri/src/script_runner.rs`
+  - `ucasclasser-package/scripts/prepare-runtime.mjs`
+  - `ucasclasser-package/package.json`
+  - `ucasclasser-package/src-tauri/resources/**`
+  - `ucasclasser-package/runtime-dist/**`
+- `debug/archive`
+  - 旧浏览器 collectors
+  - legacy auth login/check/webcheck
+  - 仅用于本地对照的 repro 脚本
+
+### 11.2 当前结论
+
+- 双端同步已经从“风险项”变成“机制项”。
+- package 端旧 collectors 和 legacy/debug auth 不再留在主路径，统一迁到 `.local-archive/ucasclasser-package/`。
+- package 端运行产物是否干净，不再靠人工比对目录，改由同步脚本清理后再重建。
+- 后续如果再出现双端行为不一致，先检查同步边界是否被突破，再检查 package 壳层是否需要单独修复。
+
+## 12. 本文结论
 
 当前代码库的核心问题不是“没有主线”，而是“主线已经成立，但旧链、调试链、共享层、打包副本还混在一起”。
 

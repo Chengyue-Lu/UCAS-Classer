@@ -752,6 +752,7 @@ function createSettingsField(label, value, options = {}) {
 function openSettingsModal(feedbackMessage = '') {
   state.modalType = 'settings'
   resetModal()
+  modalPanel.dataset.layout = 'settings'
 
   modalKind.textContent = 'Settings'
   modalTitle.textContent = '应用设置'
@@ -778,6 +779,7 @@ function openSettingsModal(feedbackMessage = '') {
       `${Math.max(1, Math.round((state.settings.cookieRefreshIntervalSecs || 3600) / 60))} 分钟`,
     ),
   )
+  syncSettingsMeta(state.settings)
 
   const settingsForm = document.createElement('div')
   settingsForm.className = 'settings-form'
@@ -794,6 +796,7 @@ function openSettingsModal(feedbackMessage = '') {
       placeholder: '默认 3',
     },
   )
+  authCheckField.field.classList.add('settings-field--compact')
   authCheckField.control.type = 'number'
   authCheckField.control.min = '1'
 
@@ -805,6 +808,7 @@ function openSettingsModal(feedbackMessage = '') {
       placeholder: '默认 60',
     },
   )
+  collectField.field.classList.add('settings-field--compact')
   collectField.control.type = 'number'
   collectField.control.min = '1'
 
@@ -816,6 +820,7 @@ function openSettingsModal(feedbackMessage = '') {
       placeholder: '默认 60',
     },
   )
+  cookieRefreshField.field.classList.add('settings-field--compact')
   cookieRefreshField.control.type = 'number'
   cookieRefreshField.control.min = '1'
 
@@ -836,6 +841,7 @@ function openSettingsModal(feedbackMessage = '') {
     { value: 'past', label: '以前学期' },
   ]
   let selectedScope = state.settings.courseScope || 'all'
+  let scopeSaving = false
 
   const renderScopeButtons = () => {
     scopeToggle.replaceChildren()
@@ -845,9 +851,44 @@ function openSettingsModal(feedbackMessage = '') {
       button.type = 'button'
       button.dataset.active = String(selectedScope === option.value)
       button.textContent = option.label
-      button.addEventListener('click', () => {
+      button.disabled = scopeSaving
+      button.addEventListener('click', async () => {
+        if (scopeSaving || selectedScope === option.value) {
+          return
+        }
+
+        const previousScope = state.settings.courseScope || 'all'
         selectedScope = option.value
+        scopeSaving = true
         renderScopeButtons()
+
+        try {
+          const saved = await invokeTauriCommand('save_app_settings', {
+            settings: {
+              ...state.settings,
+              courseScope: option.value,
+            },
+          })
+
+          if (!saved) {
+            selectedScope = previousScope
+            setModalFeedback('Tauri bridge unavailable; scope was not saved.', 'error')
+            return
+          }
+
+          state.settings = saved
+          selectedScope = saved.courseScope || option.value
+          syncSettingsMeta(state.settings)
+          renderScopeButtons()
+          renderCourses()
+          setModalFeedback('Course scope updated.', 'success')
+        } catch (error) {
+          selectedScope = previousScope
+          setModalFeedback(String(error), 'error')
+        } finally {
+          scopeSaving = false
+          renderScopeButtons()
+        }
       })
       scopeToggle.append(button)
     })
@@ -855,13 +896,12 @@ function openSettingsModal(feedbackMessage = '') {
 
   renderScopeButtons()
   scopeField.append(scopeToggle)
-  settingsForm.append(
-    downloadField.field,
-    authCheckField.field,
-    collectField.field,
-    cookieRefreshField.field,
-    scopeField,
-  )
+
+  const intervalRow = document.createElement('div')
+  intervalRow.className = 'settings-inline-row'
+  intervalRow.append(authCheckField.field, collectField.field, cookieRefreshField.field)
+
+  settingsForm.append(downloadField.field, scopeField, intervalRow)
   modalBody.append(settingsForm)
 
   modalActions.append(
@@ -871,7 +911,7 @@ function openSettingsModal(feedbackMessage = '') {
         const nextSettings = {
           ...state.settings,
           downloadDir: downloadField.control.value.trim(),
-          courseScope: selectedScope,
+          courseScope: state.settings.courseScope || selectedScope,
           authCheckIntervalSecs: intervalMinutesToSecs(authCheckField.control.value, 180),
           collectIntervalSecs: intervalMinutesToSecs(collectField.control.value, 3600),
           cookieRefreshIntervalSecs: intervalMinutesToSecs(
@@ -891,6 +931,9 @@ function openSettingsModal(feedbackMessage = '') {
           }
 
           state.settings = saved
+          selectedScope = state.settings.courseScope || selectedScope
+          syncSettingsMeta(state.settings)
+          renderScopeButtons()
           modalMeta.replaceChildren(
             createDetailChip('当前下载目录', state.settings.downloadDir || '未设置'),
             createDetailChip(
@@ -914,6 +957,7 @@ function openSettingsModal(feedbackMessage = '') {
               `${Math.max(1, Math.round((state.settings.cookieRefreshIntervalSecs || 3600) / 60))} 分钟`,
             ),
           )
+          syncSettingsMeta(state.settings)
           renderCourses()
           setModalFeedback('设置已保存。', 'success')
         } catch (error) {

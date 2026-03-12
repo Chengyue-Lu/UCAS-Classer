@@ -13,7 +13,10 @@ use tokio::time::sleep;
 use crate::app_settings::{load_app_settings, persist_runtime_markers};
 use crate::db_import::{import_latest_cache, last_imported_collect_finished_at, latest_collect_finished_at};
 use crate::paths::storage_state_file;
-use crate::script_runner::{run_hidden_script, run_visible_login_script, storage_state_modified_ms, ScriptOutput};
+use crate::script_runner::{
+    run_hidden_script, spawn_visible_login_script, storage_state_modified_ms,
+    wait_for_script_child, ScriptOutput,
+};
 
 pub type SharedRuntimeService = Arc<RuntimeService>;
 
@@ -132,9 +135,25 @@ impl CheckSource {
     }
 }
 
+fn script_failure_message(script: &str, output: &ScriptOutput) -> String {
+    let stderr = output.stderr.trim();
+    if !stderr.is_empty() {
+        return format!("{script} failed: {stderr}");
+    }
+
+    let stdout = output.stdout.trim();
+    if !stdout.is_empty() {
+        return format!("{script} failed: {stdout}");
+    }
+
+    format!("{script} failed with exit code {}", output.exit_code)
+}
+
 pub struct RuntimeService {
     snapshot: Mutex<RuntimeSnapshot>,
     scheduler_stop: Mutex<Option<Arc<AtomicBool>>>,
+    login_generation: Mutex<u64>,
+    active_login_pid: Mutex<Option<u32>>,
 }
 
 impl RuntimeService {
@@ -142,6 +161,8 @@ impl RuntimeService {
         Arc::new(Self {
             snapshot: Mutex::new(RuntimeSnapshot::default()),
             scheduler_stop: Mutex::new(None),
+            login_generation: Mutex::new(0),
+            active_login_pid: Mutex::new(None),
         })
     }
 
@@ -164,6 +185,36 @@ impl RuntimeService {
         cloned
     }
 
+    fn next_login_generation(&self) -> u64 {
+        let mut generation = self
+            .login_generation
+            .lock()
+            .expect("login generation lock poisoned");
+        *generation += 1;
+        *generation
+    }
+
+    fn set_active_login_pid(&self, pid: Option<u32>) {
+        let mut guard = self
+            .active_login_pid
+            .lock()
+            .expect("active login pid lock poisoned");
+        *guard = pid;
+    }
+
+    fn is_current_login(&self, generation: u64, pid: u32) -> bool {
+        let current_generation = *self
+            .login_generation
+            .lock()
+            .expect("login generation lock poisoned");
+        let current_pid = *self
+            .active_login_pid
+            .lock()
+            .expect("active login pid lock poisoned");
+
+        current_generation == generation && current_pid == Some(pid)
+    }
+
     fn set_interrupt(&self, reason: String) {
         let now = now_ms();
         let current_storage_mtime = storage_state_modified_ms(storage_state_file());
@@ -179,6 +230,29 @@ impl RuntimeService {
             }
             snapshot.last_error = Some(reason);
         });
+    }
+
+    fn cancel_active_login(&self, reason: &str) -> Result<bool, String> {
+        let pid = {
+            let guard = self
+                .active_login_pid
+                .lock()
+                .expect("active login pid lock poisoned");
+            *guard
+        };
+
+        let Some(pid) = pid else {
+            return Ok(false);
+        };
+
+        kill_login_process(pid)?;
+        self.set_active_login_pid(None);
+        self.update(|snapshot| {
+            snapshot.login_running = false;
+            snapshot.last_login_finished_at_ms = Some(now_ms());
+            snapshot.last_error = Some(reason.to_string());
+        });
+        Ok(true)
     }
 
     fn try_clear_interrupt_after_fresh_storage(&self) {
@@ -338,6 +412,28 @@ impl RuntimeService {
         Ok(true)
     }
 
+    fn handle_missing_storage(self: &Arc<Self>, source: CheckSource, auto_recover: bool) -> String {
+        let now = now_ms();
+        let reason = "storage state is missing".to_string();
+
+        self.update(|snapshot| {
+            snapshot.last_auth_check_at_ms = Some(now);
+            snapshot.last_auth_check_ok = Some(false);
+            snapshot.last_auth_check_source = Some(source.as_str().to_string());
+            snapshot.last_storage_mtime_ms = None;
+            snapshot.last_error = Some(reason.clone());
+            snapshot.auth_check_running = false;
+            snapshot.explicit_check_running = false;
+        });
+
+        if auto_recover {
+            self.set_interrupt(reason.clone());
+            let _ = self.spawn_interrupt_login();
+        }
+
+        reason
+    }
+
     fn should_skip_scheduled_check(&self) -> bool {
         let snapshot = self.snapshot();
         snapshot.interrupt_flag
@@ -352,6 +448,11 @@ impl RuntimeService {
         self.update(|snapshot| {
             snapshot.last_three_min_tick_at_ms = Some(now);
         });
+
+        if !storage_state_exists() {
+            let _ = self.handle_missing_storage(CheckSource::Scheduled, true);
+            return;
+        }
 
         if self.should_skip_scheduled_check() {
             return;
@@ -430,7 +531,9 @@ impl RuntimeService {
         let one_hour_interval_secs = intervals.one_hour_interval_secs;
         let collect_interval_secs = intervals.collect_interval_secs;
 
-        if run_initial_check && !self.should_skip_scheduled_check() {
+        if run_initial_check && !storage_state_exists() {
+            let _ = self.handle_missing_storage(CheckSource::Scheduled, true);
+        } else if run_initial_check && !self.should_skip_scheduled_check() {
             let initial_check_service = Arc::clone(self);
             spawn(async move {
                 let _ = initial_check_service
@@ -533,6 +636,10 @@ impl RuntimeService {
             return Err("auth state is being reset or refreshed; auth check is temporarily blocked".to_string());
         }
 
+        if !storage_state_exists() {
+            return Err(self.handle_missing_storage(source, auto_recover));
+        }
+
         let started_at = now_ms();
         let refresh_due = self.snapshot().hourly_refresh_due;
         let previous_storage_mtime = storage_state_modified_ms(storage_state_file());
@@ -607,10 +714,7 @@ impl RuntimeService {
         }
 
         self.update(|snapshot| {
-            snapshot.last_error = Some(format!(
-                "auth:check failed with exit code {}",
-                result.exit_code
-            ));
+            snapshot.last_error = Some(script_failure_message("auth:check", &result));
         });
 
         if auto_recover {
@@ -655,10 +759,7 @@ impl RuntimeService {
             };
             snapshot.last_storage_mtime_ms = storage_state_modified_ms(storage_state_file());
             if !result.success {
-                snapshot.last_error = Some(format!(
-                    "auth:reset failed with exit code {}",
-                    result.exit_code
-                ));
+                snapshot.last_error = Some(script_failure_message("auth:reset", &result));
             }
         });
 
@@ -672,12 +773,17 @@ impl RuntimeService {
     fn spawn_interrupt_login(self: &Arc<Self>) -> Result<(), String> {
         let snapshot = self.snapshot();
         if snapshot.login_running {
-            return Ok(());
+            let _ = self.cancel_active_login("previous login canceled; restarting login");
         }
 
         if !snapshot.interrupt_flag {
             self.set_interrupt("manual login requested".to_string());
         }
+
+        let child = spawn_visible_login_script("auth:login", &[])?;
+        let pid = child.id();
+        let generation = self.next_login_generation();
+        self.set_active_login_pid(Some(pid));
 
         self.update(|state| {
             state.login_running = true;
@@ -687,20 +793,31 @@ impl RuntimeService {
 
         let service = Arc::clone(self);
         spawn(async move {
-            let result = spawn_blocking(|| run_visible_login_script("auth:login", &[])).await;
+            let result = spawn_blocking(move || wait_for_script_child(child, "auth:login")).await;
 
             match result {
                 Ok(Ok(output)) => {
+                    if !service.is_current_login(generation, pid) {
+                        return;
+                    }
+                    service.set_active_login_pid(None);
                     service.update(|snapshot| {
                         snapshot.login_running = false;
                         snapshot.last_login_finished_at_ms = Some(now_ms());
                         snapshot.last_storage_mtime_ms =
                             storage_state_modified_ms(storage_state_file());
+                        snapshot.last_stdout = if output.stdout.is_empty() {
+                            snapshot.last_stdout.clone()
+                        } else {
+                            Some(output.stdout.clone())
+                        };
+                        snapshot.last_stderr = if output.stderr.is_empty() {
+                            snapshot.last_stderr.clone()
+                        } else {
+                            Some(output.stderr.clone())
+                        };
                         if !output.success {
-                            snapshot.last_error = Some(format!(
-                                "auth:login failed with exit code {}",
-                                output.exit_code
-                            ));
+                            snapshot.last_error = Some(script_failure_message("auth:login", &output));
                         }
                     });
 
@@ -711,6 +828,10 @@ impl RuntimeService {
                     }
                 }
                 Ok(Err(error)) => {
+                    if !service.is_current_login(generation, pid) {
+                        return;
+                    }
+                    service.set_active_login_pid(None);
                     service.update(|snapshot| {
                         snapshot.login_running = false;
                         snapshot.last_login_finished_at_ms = Some(now_ms());
@@ -718,6 +839,10 @@ impl RuntimeService {
                     });
                 }
                 Err(error) => {
+                    if !service.is_current_login(generation, pid) {
+                        return;
+                    }
+                    service.set_active_login_pid(None);
                     service.update(|snapshot| {
                         snapshot.login_running = false;
                         snapshot.last_login_finished_at_ms = Some(now_ms());
@@ -782,10 +907,7 @@ impl RuntimeService {
                     "collect:all finished but full-collect-summary.json is incomplete".to_string(),
                 );
             } else {
-                snapshot.last_error = Some(format!(
-                    "collect:all failed with exit code {}",
-                    result.exit_code
-                ));
+                snapshot.last_error = Some(script_failure_message("collect:all", &result));
             }
         });
 
@@ -872,6 +994,38 @@ fn configured_interval_secs(name: &str, default_value: u64) -> u64 {
         .and_then(|value| value.trim().parse::<u64>().ok())
         .filter(|value| *value > 0)
         .unwrap_or(default_value)
+}
+
+fn storage_state_exists() -> bool {
+    storage_state_file().is_file()
+}
+
+#[cfg(target_os = "windows")]
+fn kill_login_process(pid: u32) -> Result<(), String> {
+    use std::os::windows::process::CommandExt;
+    use std::process::Command;
+
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+    let status = Command::new("taskkill")
+        .args(["/PID", &pid.to_string(), "/T", "/F"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status()
+        .map_err(|error| format!("failed to cancel existing login process {pid}: {error}"))?;
+
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "failed to cancel existing login process {pid}: taskkill exited with {:?}",
+            status.code()
+        ))
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn kill_login_process(_pid: u32) -> Result<(), String> {
+    Err("login process cancel is only implemented on Windows right now".to_string())
 }
 
 #[tauri::command]

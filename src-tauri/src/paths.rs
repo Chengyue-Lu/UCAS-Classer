@@ -9,11 +9,22 @@ pub fn project_root() -> PathBuf {
 }
 
 pub fn storage_state_file() -> PathBuf {
-    project_root()
+    let primary = data_dir().join("auth").join("storage-state.json");
+    if primary.is_file() {
+        return primary;
+    }
+
+    let legacy = project_root()
         .join("automation")
         .join("auth")
         .join("data")
-        .join("storage-state.json")
+        .join("storage-state.json");
+
+    if legacy.is_file() {
+        return legacy;
+    }
+
+    primary
 }
 
 pub fn data_dir() -> PathBuf {

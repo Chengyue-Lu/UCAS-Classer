@@ -77,6 +77,11 @@ pub fn run_hidden_script(script: &str, extra_args: &[&str]) -> Result<ScriptOutp
 }
 
 pub fn run_visible_login_script(script: &str, extra_args: &[&str]) -> Result<ScriptOutput, String> {
+    let child = spawn_visible_login_script(script, extra_args)?;
+    wait_for_script_child(child, script)
+}
+
+pub fn spawn_visible_login_script(script: &str, extra_args: &[&str]) -> Result<Child, String> {
     let mut command = if cfg!(windows) {
         let mut command = Command::new("cmd.exe");
         command.current_dir(project_root());
@@ -92,22 +97,14 @@ pub fn run_visible_login_script(script: &str, extra_args: &[&str]) -> Result<Scr
         base_command(script, extra_args)
     };
 
+    command.stdin(Stdio::null());
+    command.stdout(Stdio::piped());
+    command.stderr(Stdio::piped());
+    apply_window_mode(&mut command, ScriptWindow::Hidden);
+
     command
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit());
-    apply_window_mode(&mut command, ScriptWindow::Console);
-
-    let status = command
-        .status()
-        .map_err(|error| format!("failed to run visible `{script}`: {error}"))?;
-
-    Ok(ScriptOutput {
-        success: status.success(),
-        exit_code: status.code().unwrap_or(-1),
-        stdout: String::new(),
-        stderr: String::new(),
-    })
+        .spawn()
+        .map_err(|error| format!("failed to run visible `{script}`: {error}"))
 }
 
 pub fn spawn_hidden_background_script(script: &str, extra_args: &[&str]) -> Result<Child, String> {
@@ -127,6 +124,14 @@ pub fn storage_state_modified_ms(path: PathBuf) -> Option<u64> {
     let modified = metadata.modified().ok()?;
     let duration = modified.duration_since(std::time::UNIX_EPOCH).ok()?;
     Some(duration.as_millis() as u64)
+}
+
+pub fn wait_for_script_child(child: Child, script: &str) -> Result<ScriptOutput, String> {
+    let output = child
+        .wait_with_output()
+        .map_err(|error| format!("failed while waiting for `{script}`: {error}"))?;
+
+    Ok(build_script_output(output))
 }
 
 fn build_script_output(output: Output) -> ScriptOutput {
