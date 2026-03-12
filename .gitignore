@@ -12,12 +12,16 @@ src-tauri/resources/runtime/*
 data/cache/
 data/cache-browser-baseline/
 data/session/
+data/app-settings.json
+data/tauri-dev-stdout.log
+data/tauri-dev-stderr.log
 auth.local.json
 tests/
 *.db
 *.sqlite
 *.sqlite3
 *.lnk
+.local-archive/
 
 .DS_Store
 Thumbs.db

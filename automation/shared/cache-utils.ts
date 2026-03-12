@@ -1,43 +1,6 @@
-import type { Browser, BrowserContext, Page } from '@playwright/test'
 import { readdir, rm, writeFile } from 'node:fs/promises'
 import { basename } from 'node:path'
-import { authPaths } from '../auth/paths.js'
-import {
-  collectorPaths,
-  ensureCollectorDirs,
-  resolveArtifactHtml,
-  resolveArtifactScreenshot,
-} from './paths.js'
-
-export function normalizeText(value: string | null | undefined): string {
-  return (value ?? '').replace(/\s+/g, ' ').trim()
-}
-
-export async function createAuthenticatedContext(browser: Browser) {
-  return browser.newContext({
-    storageState: authPaths.storageStateFile,
-  })
-}
-
-export async function gotoSettled(page: Page, url: string) {
-  await page.goto(url, { waitUntil: 'domcontentloaded' })
-  await page.waitForTimeout(3000)
-}
-
-export async function writePageArtifacts(page: Page, prefix: string) {
-  await ensureCollectorDirs()
-
-  const htmlPath = resolveArtifactHtml(prefix)
-  const screenshotPath = resolveArtifactScreenshot(prefix)
-
-  await writeFile(htmlPath, await page.content(), 'utf8')
-  await page.screenshot({ path: screenshotPath, fullPage: true })
-
-  return {
-    htmlPath,
-    screenshotPath,
-  }
-}
+import { collectorPaths, ensureCollectorDirs } from './cache-paths.js'
 
 export async function writeJsonFile(path: string, data: unknown) {
   await ensureCollectorDirs()
@@ -98,9 +61,4 @@ export async function runWithConcurrency<TInput, TOutput>(
 
   await Promise.all(Array.from({ length: limit }, () => consume()))
   return results
-}
-
-export async function closeQuietly(context: BrowserContext, page?: Page) {
-  await page?.close().catch(() => {})
-  await context.close().catch(() => {})
 }

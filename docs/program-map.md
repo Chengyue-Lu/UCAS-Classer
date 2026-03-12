@@ -1,0 +1,487 @@
+# UCAS Classer 程序 Map
+<!-- markdownlint-disable MD013 MD033 -->
+
+## 1. 基线与范围
+
+### 1.1 分析边界
+
+- 本文以 `git ls-files` 可见的主仓源码为权威范围。
+- `ucasclasser-package/` 只作为打包副本漂移参考，不纳入主索引，不纳入主线删改结论。
+- 不纳入主程序 map 的对象：
+  - `ucasclasser-package/runtime-dist`
+  - `target/`、`src-tauri/target/`
+  - `data/cache/`
+  - SQLite、构建产物、安装包输出
+- 本文目标不是立刻删代码，而是先把：
+  - 入口
+  - 触发点
+  - 调用链
+  - 数据流
+  - 重复实现
+  - 可删点
+  - 稳定性风险
+  固化为一个能持续维护的总图。
+
+### 1.2 验证基线
+
+以下检查在整理本文时已通过：
+
+```powershell
+npm run check
+cargo check --manifest-path src-tauri/Cargo.toml
+```
+
+### 1.3 当前一句话结构
+
+当前主程序是一个“四层串联”的桌面工具：
+
+1. `src/` 前端负责展示和触发 Tauri command。
+2. `src-tauri/` 负责运行时调度、窗口/托盘、导库、下载桥接。
+3. `automation/request-*` 与 `automation/auth/*` 负责登录、校验、采集、下载。
+4. `data/cache/*.json` 与 `data/ucas-classer.sqlite` 负责缓存和展示数据。
+
+## 2. 总览图
+
+### 2.1 分层总览
+
+```mermaid
+flowchart TD
+  User[用户]
+  UI[src/index.html + src/app.js]
+  Tauri[src-tauri/src/main.rs]
+  Runtime[src-tauri/src/auth_runtime.rs]
+  Settings[src-tauri/src/app_settings.rs]
+  DataRead[src-tauri/src/app_data.rs]
+  Importer[src-tauri/src/db_import.rs]
+  DownloadBridge[src-tauri/src/downloads.rs]
+  Runner[src-tauri/src/script_runner.rs]
+  Auth[automation/auth/*]
+  RequestCourse[automation/request-course-list/*]
+  RequestCollect[automation/request-collectors/*]
+  Shared[shared/runtime-paths.ts + automation/shared/{cache-paths,collector-types,cache-utils}.ts]
+  Cache[data/cache/*.json]
+  DB[data/ucas-classer.sqlite]
+  Browser[Edge / Chrome / Playwright]
+
+  User --> UI
+  UI -->|invoke| Tauri
+  Tauri --> Runtime
+  Tauri --> Settings
+  Tauri --> DataRead
+  Tauri --> DownloadBridge
+  Runtime --> Runner
+  DownloadBridge --> Runner
+  Runner --> Auth
+  Runner --> RequestCourse
+  Runner --> RequestCollect
+  Auth --> Browser
+  RequestCourse --> Shared
+  RequestCollect --> Shared
+  Auth --> Shared
+  RequestCourse --> Cache
+  RequestCollect --> Cache
+  Runtime --> Importer
+  Importer --> Cache
+  Importer --> DB
+  DataRead --> DB
+  UI -->|load_dashboard_data| DataRead
+  UI -->|load_app_settings/save_app_settings| Settings
+```
+
+### 2.2 主线时序图
+
+```mermaid
+sequenceDiagram
+  participant U as 用户/系统启动
+  participant FE as src/app.js
+  participant TA as src-tauri/main.rs
+  participant RT as auth_runtime.rs
+  participant SR as script_runner.rs
+  participant AU as automation/auth/*
+  participant RC as request-course-list/*
+  participant CL as request-collectors/*
+  participant CA as data/cache/*.json
+  participant DB as SQLite
+
+  U->>FE: 打开应用
+  FE->>TA: start_runtime_scheduler
+  TA->>RT: 启动 scheduler
+  RT->>RT: 标记 initial collect due
+  RT->>SR: npm run auth:check
+  SR->>AU: request 校验登录态
+  AU-->>RT: auth ok / fail
+
+  alt auth ok
+    RT->>SR: npm run collect:all -- --concurrency 4
+    SR->>CL: request 全量采集
+    CL->>RC: 先拉课程列表
+    RC-->>CL: course-list.json/html
+    CL-->>CA: 写 course-module/material/notice/assignment/full-collect-summary
+    RT->>RT: 判断 db_import_due
+    RT->>DB: import_latest_cache
+    DB-->>FE: load_dashboard_data 可读
+  else auth fail
+    RT->>SR: npm run auth:reset
+    RT->>SR: npm run auth:login
+    SR->>AU: 打开可见浏览器登录
+    AU-->>RT: 新 storage-state 保存
+    RT->>SR: 再跑一次 auth:check
+  end
+
+  U->>FE: 点击 Collect
+  FE->>TA: run_full_collect
+  TA->>RT: 显式采集
+  RT->>SR: collect:all
+  RT->>DB: run_db_import_inner
+
+  U->>FE: 下载资料
+  FE->>TA: download_protected_file
+  TA->>SR: npm run download:file
+  SR->>AU: 复用 storage-state 发请求
+```
+
+## 3. 入口与触发点 Map
+
+### 3.1 用户可见入口
+
+| 入口 | 触发代码 | 下游 | 输出 |
+| --- | --- | --- | --- |
+| 启动应用 | `src/app.js -> initialize()` | `start_runtime_scheduler`、`load_settings`、`load_dashboard_data` | 初始状态、首轮 `check + collect` |
+| 点击 `Check` | `runRuntimeAction('check')` | `run_auth_check` | 登录态显式校验 |
+| 点击 `Collect` | `runRuntimeAction('collect')` | `run_full_collect` | 全量采集、导库、刷新 UI |
+| 点击 `Login` | `runRuntimeAction('login')` | `run_interrupt_login` | 手动进入登录恢复链 |
+| 打开设置 | `openSettingsModal()` | `load_app_settings`、`save_app_settings` | 保存下载目录、学期过滤、调度间隔 |
+| 下载资料附件 | `downloadResource()` | `download_protected_file` | 用登录态保存文件到本地 |
+| 打开通知/作业原页 | `openAuthenticatedUrl()` | `open_authenticated_url` | 用现有登录态后台打开页面 |
+| 关闭窗口 | `window_close` | `destroy_main_window` | 仅销毁窗口，应用驻留托盘 |
+
+### 3.2 自动触发入口
+
+| 触发源 | 触发条件 | 下游 | 备注 |
+| --- | --- | --- | --- |
+| Runtime scheduler | 应用启动 | 初始 `auth:check` | 避免长时间无状态 |
+| Runtime scheduler | 应用启动 | 初始 `collect:all` | 让首次 collect 基准明确 |
+| Runtime scheduler | `auth_check_interval_secs` 到时 | `auth:check` | 可带 cookie refresh |
+| Runtime scheduler | `collect_interval_secs` 到时 | `run_full_collect` | 仅在非中断、非登录中运行 |
+| Runtime scheduler | 检测到新 cache 未导库 | `run_db_import_inner` | 自动导入 SQLite |
+| 下载桥接 | 前端或详情弹窗触发 | `download:file` | 单次按需，不走 scheduler |
+
+## 4. 主线判断
+
+### 4.1 当前明确属于主线的目录
+
+- `src/`
+- `src-tauri/src/`
+- `automation/auth/`
+- `automation/request-course-list/`
+- `automation/request-collectors/`
+- `automation/downloads/`
+- `shared/runtime-paths.ts`
+- `automation/shared/cache-paths.ts`
+- `automation/shared/collector-types.ts`
+- `automation/shared/cache-utils.ts`
+
+### 4.2 当前不属于主线但仍需注意的残留/附加面
+
+- 旧浏览器采集链源码已移出主仓 Git 跟踪，仅保留在 `.local-archive/` 本地参考。
+- `src-tauri` 暴露但当前 UI 未用的一批 runtime command 仍然存在，供 `runtime_cli` 和调试使用。
+- 本地状态与日志文件已停止跟踪，但运行时仍会在 `data/` 下生成。
+
+## 5. 重复实现与裁剪结论
+
+### 5.1 可直接删
+
+这些项在主仓主线中已经不承担职责，且有明确替代物或明确不应继续进版本控制。
+
+| 项目 | 证据 | 结论 | 建议 |
+| --- | --- | --- | --- |
+| `src/app.js` 的 `getCourseScopeLabelLegacy` / `createSettingsMetaLegacy` / `syncSettingsMetaLegacy` / `openSettingsModalLegacy` | 全仓无调用，只有自定义存在；主入口实际调用 `openSettingsModal()` | 主仓死代码 | 已从开发端删除 |
+| `data/app-settings.json` | 运行时本地状态文件，内容与机器环境耦合 | 不应被版本控制 | 已从 Git 跟踪移除，继续作为本地运行时文件存在 |
+| `data/tauri-dev-stdout.log` | 本地开发日志 | 不应被版本控制 | 已从 Git 跟踪移除 |
+| `data/tauri-dev-stderr.log` | 本地开发日志 | 不应被版本控制 | 已从 Git 跟踪移除 |
+
+### 5.2 先隔离再删
+
+这些项不是主线，现已从主仓 Git 跟踪中移除，只在本机归档保留代码参考。
+
+本地参考存档约定：
+
+- 旧浏览器采集链与 legacy auth 调试脚本已复制到 `.local-archive/`。
+- `.local-archive/` 已加入 `.gitignore`，只作为本机代码参考，不进入版本控制。
+
+| 项目 | 当前状态 | 不能直接删的原因 | 建议 |
+| --- | --- | --- | --- |
+| `automation/collectors/course-list.ts` | 已移出主仓 Git 跟踪 | 旧浏览器版课程列表采集 | 仅保留 `.local-archive/` 参考 |
+| `automation/collectors/module-urls.ts` | 已移出主仓 Git 跟踪 | 旧浏览器版模块入口解析 | 仅保留 `.local-archive/` 参考 |
+| `automation/collectors/material-list.ts` | 已移出主仓 Git 跟踪 | 旧浏览器版资料采集 | 仅保留 `.local-archive/` 参考 |
+| `automation/collectors/notice-list.ts` | 已移出主仓 Git 跟踪 | 旧浏览器版通知采集 | 仅保留 `.local-archive/` 参考 |
+| `automation/collectors/assignment-list.ts` | 已移出主仓 Git 跟踪 | 旧浏览器版作业采集 | 仅保留 `.local-archive/` 参考 |
+| `automation/collectors/full-collect.ts` | 已移出主仓 Git 跟踪 | 旧浏览器版全量采集编排 | 仅保留 `.local-archive/` 参考 |
+| `automation/collectors/run-course-list.ts` | 已移出主仓 Git 跟踪 | 旧 CLI 包装 | 仅保留 `.local-archive/` 参考 |
+| `automation/collectors/run-full-collect.ts` | 已移出主仓 Git 跟踪 | 旧 CLI 包装 | 仅保留 `.local-archive/` 参考 |
+| `automation/collectors/session.ts` | 已移出主仓 Git 跟踪 | 旧浏览器登录态打开器 | 仅保留 `.local-archive/` 参考 |
+| `automation/collectors/README.md` | 已改为共享层说明 | 不再描述旧主链 | 保留为当前共享层文档 |
+
+### 5.3 不能删，但应重构或加固
+
+| 项目 | 原因 | 风险 | 建议 |
+| --- | --- | --- | --- |
+| `automation/shared/cache-paths.ts` | request 主线共用 cache 路径协议 | 路径仍是主线协议 | 已迁入共享层，保留 |
+| `automation/shared/collector-types.ts` | request 主线直接复用快照类型 | 类型仍是主线协议 | 已迁入共享层，保留 |
+| `automation/shared/cache-utils.ts` | request 主线复用 `writeJsonFile`、`runWithConcurrency`、`pruneStaleCourseCache` | cache 工具仍是主线支撑 | 已从旧目录拆出，保留 |
+| `src-tauri/src/main.rs` 中未被 UI 用到的 runtime command | `runtime_cli` 和运维调试仍可用 | 误删会破坏调试面 | 先按“UI-only / 调试-only”分层暴露 |
+| `.local-archive/automation/auth/*.ts` | 已非主线，但仍用于人工对照和回退 | 仍有临时 debug 价值 | 保留本机归档，不进入 Git |
+
+## 6. 稳定性改进优先级
+
+### 6.1 高优先级
+
+| 问题 | 位置 | 影响 | 建议 |
+| --- | --- | --- | --- |
+| 开发端与打包端双份源码漂移不可见 | `.gitignore` 忽略 `/ucasclasser-package/` | 主仓改完后，打包副本可能继续跑旧逻辑 | 建立最小同步清单，或把 package 副本改为可比对的同步流程 |
+| 跟踪本地状态与日志文件 | `data/*` | 污染版本控制，增加错误基线 | 从仓库移除本地状态文件 |
+| 前端存在未调用 legacy 分支 | `src/app.js` | 增加维护成本，掩盖真实入口 | 删除死代码，只保留当前 settings modal |
+| package 副本尚未同步共享层命名 | `ucasclasser-package/` 仍可能保留旧目录结构 | 开发端和打包端认知继续漂移 | 最后统一处理 package 同步 |
+
+### 6.2 中优先级
+
+| 问题 | 位置 | 影响 | 建议 |
+| --- | --- | --- | --- |
+| README 与真实主线不完全一致 | `README.md`、`src-tauri/README.md`、部分 archive 文档 | 容易误导接手人 | 统一更新为 request 主线现状 |
+| Debug command 与 UI command 混放 | `src-tauri/src/main.rs` | 外部接口面过宽 | 标注调试命令，必要时拆 feature 或内部接口 |
+| `script_runner.rs` 依赖 `npm run` 字符串协议 | Rust <-> Node 约定隐式 | 重命名 script 时容易静默失效 | 补一份 command map 文档，或做常量集中定义 |
+
+### 6.3 低优先级
+
+| 问题 | 位置 | 影响 | 建议 |
+| --- | --- | --- | --- |
+| 终端中文乱码 | 多份 README / 日志 / HTML 解析 | 阅读体验差 | 文档统一说明按 UTF-8 读取 |
+| 前端与打包副本 UI 文案细节漂移 | `src/app.js` vs `ucasclasser-package/src/app.js` | 不影响主仓逻辑判断 | 放在打包同步附录中处理 |
+
+## 7. 文件索引表
+
+说明：
+
+- “主线地位”只表示对当前主程序是否关键，不表示文件是否应永久保留。
+- “重复/裁剪结论”按当前分析结论填写。
+- `ucasclasser-package/` 未纳入本索引。
+
+### 7.1 根目录与工程配置
+
+| 文件 | 职责 | 上游/触发点 | 下游/影响 | 主线地位 | 重复/裁剪结论 |
+| --- | --- | --- | --- | --- | --- |
+| `.gitignore` | 定义仓库忽略边界 | Git | 是否能发现 package 漂移、产物污染 | 支撑 | 需调整，当前忽略 `ucasclasser-package/` 使漂移不可见 |
+| `LICENSE` | 许可证 | 仓库元信息 | 发布合规 | 非运行时 | 保留 |
+| `README.md` | 根说明文档 | 人工阅读 | 接手与发布说明 | 支撑 | 内容部分过时，且终端读有乱码风险，需更新 |
+| `RELEASE_NOTE_1.0.2.md` | 发版记录 | 人工阅读 | 版本说明 | 支撑 | 保留，建议后续统一编码与表述 |
+| `package.json` | Node 命令总入口 | 开发者、`script_runner.rs` | 驱动 auth/check/collect/download | 主线必经 | 保留；它已证明 request 链是当前主线 |
+| `tsconfig.json` | TS 根配置代理 | `npm run check` | 继承脚本配置 | 支撑 | 保留 |
+| `tsconfig.scripts.json` | 自动化脚本类型检查配置 | `npm run check` | 校验 `automation/**` 与 `shared/**` | 主线支撑 | 保留 |
+
+### 7.2 前端层
+
+| 文件 | 职责 | 上游/触发点 | 下游/影响 | 主线地位 | 重复/裁剪结论 |
+| --- | --- | --- | --- | --- | --- |
+| `src/index.html` | 桌面主界面结构 | Tauri `frontendDist` | 绑定 `app.js` 与 `styles.css` | 主线必经 | 保留 |
+| `src/app.js` | 前端状态机与 Tauri command 触发器 | 用户操作、窗口启动 | 调度、设置、详情、下载、打开原页 | 主线必经 | 保留；内部 legacy settings 函数可删 |
+| `src/styles.css` | 主界面样式 | `index.html` | UI 呈现 | 主线支撑 | 保留 |
+
+### 7.3 共享路径与协议
+
+| 文件 | 职责 | 上游/触发点 | 下游/影响 | 主线地位 | 重复/裁剪结论 |
+| --- | --- | --- | --- | --- | --- |
+| `shared/runtime-paths.ts` | 统一 runtime/data/cache 路径解析 | `automation/**` | cache 输出、数据目录环境变量 | 主线支撑 | 保留；是共享基础设施 |
+
+### 7.4 Auth 层
+
+| 文件 | 职责 | 上游/触发点 | 下游/影响 | 主线地位 | 重复/裁剪结论 |
+| --- | --- | --- | --- | --- | --- |
+| `automation/README.md` | 自动化目录总览 | 人工阅读 | 接手说明 | 支撑 | 已偏旧，需更新为 request 主线口径 |
+| `automation/auth/README.md` | 认证链说明 | 人工阅读 | 命令使用说明 | 支撑 | 保留；需明确 legacy/debug 命令身份 |
+| `automation/auth/browser.ts` | 浏览器启动策略，优先 Edge/Chrome | SEP 登录、登录态打开原页、本地归档 debug | 打开可见或后台浏览器 | 主线支撑 | 保留 |
+| `automation/auth/check-api.ts` | 基于 request context 校验登录态，可选 refresh storage | `auth:check`、runtime check | 决定在线/离线、cookie refresh 成败 | 主线必经 | 保留，当前唯一主线 check |
+| `automation/auth/config.ts` | 核心 URL 与登录 URL 判定 | 全部 auth/request 脚本 | 校验入口与登录识别 | 主线支撑 | 保留 |
+| `automation/auth/login-and-save-sep.ts` | 可见浏览器 SEP 登录并保存 storage-state | `auth:login`、runtime interrupt login | 生成新登录态 | 主线必经 | 保留，当前唯一主线登录 |
+| `automation/auth/open-authenticated-url.ts` | 注入登录态后打开目标页 | `auth:open-url`、前端“打开原页” | 用现有登录态打开通知/作业页 | 主线支撑 | 保留 |
+| `automation/auth/paths.ts` | auth 数据目录与 artifacts 路径 | auth 全链 | storage-state、metadata、截图 HTML | 主线支撑 | 保留 |
+| `automation/auth/reset.ts` | 清空登录态 | `auth:reset`、runtime 自动恢复 | 触发登录中断流程 | 主线支撑 | 保留 |
+| `automation/auth/utils.ts` | auth 工具：prompt、artifact、context 摘要 | auth login/check/open-url 与本地归档 debug | 调试输出与人工核验 | 主线支撑 | 保留 |
+
+### 7.5 Shared 共享层
+
+| 文件 | 职责 | 上游/触发点 | 下游/影响 | 主线地位 | 重复/裁剪结论 |
+| --- | --- | --- | --- | --- | --- |
+| `automation/shared/README.md` | 共享层说明 | 人工阅读 | 解释共享路径、类型、cache 工具边界 | 主线支撑 | 已完成角色收缩 |
+| `automation/shared/cache-paths.ts` | cache 文件命名与 artifacts 路径协议 | request 主线、Rust 导库 | 所有 cache 输出名 | 主线支撑 | 已从旧目录迁入共享层 |
+| `automation/shared/collector-types.ts` | 课程、模块、通知、资料、作业快照协议 | request 主线、Rust 导库 | JSON 结构契约 | 主线支撑 | 已从旧目录迁入共享层 |
+| `automation/shared/cache-utils.ts` | 通用写文件、并发、cache 清理 | request 主线 | cache 清理、并发控制、JSON 输出 | 主线支撑 | 已从旧目录拆出浏览器无关部分 |
+
+### 7.6 下载与 request 主线
+
+| 文件 | 职责 | 上游/触发点 | 下游/影响 | 主线地位 | 重复/裁剪结论 |
+| --- | --- | --- | --- | --- | --- |
+| `automation/downloads/download-file.ts` | 用登录态直接下载受保护文件 | `download:file`、Rust downloads bridge | 保存本地文件并回传 JSON 结果 | 主线必经 | 保留 |
+| `automation/request-collectors/README.md` | request 全量采集说明 | 人工阅读 | 主线采集说明 | 支撑 | 保留；与现状基本一致 |
+| `automation/request-collectors/common.ts` | request 共享能力：context、HTML 抓取、通知/作业解析、资料树递归 | request collect、request course-list | 生成通知/资料/作业结构 | 主线必经 | 保留 |
+| `automation/request-collectors/full-collect.ts` | request 主线全量采集编排 | `collect:all`、runtime collect | 全套 cache 输出 | 主线必经 | 保留，当前采集主入口 |
+| `automation/request-collectors/module-urls.ts` | request 版模块入口解析 | request full collect | `course-module-*.json` | 主线必经 | 保留 |
+| `automation/request-collectors/run-full-collect.ts` | request full collect CLI 包装 | `package.json -> collect:all` | 启动 request 全量采集 | 主线必经 | 保留 |
+| `automation/request-course-list/README.md` | request 课程列表说明 | 人工阅读 | 主线课程列表说明 | 支撑 | 保留 |
+| `automation/request-course-list/course-list.ts` | request 版课程列表采集 + 当前/历史学期判断 | `courses:collect`、request full collect | `course-list.json/html` | 主线必经 | 保留 |
+| `automation/request-course-list/run-course-list.ts` | request course list CLI 包装 | `package.json -> courses:collect` | 启动 request 课程列表采集 | 主线必经 | 保留 |
+
+### 7.7 跟踪进仓库的本地状态与文档
+
+| 文件 | 职责 | 上游/触发点 | 下游/影响 | 主线地位 | 重复/裁剪结论 |
+| --- | --- | --- | --- | --- | --- |
+| `data/app-settings.json` | 本地运行时设置文件 | 运行时读写 | 下载目录、调度间隔 | 非源码 | 已停止跟踪，继续本地生成/维护 |
+| `data/tauri-dev-stderr.log` | 本地开发日志 | 开发运行 | 无稳定契约 | 非源码 | 已停止跟踪 |
+| `data/tauri-dev-stdout.log` | 本地开发日志 | 开发运行 | 无稳定契约 | 非源码 | 已停止跟踪 |
+| `docs/archive-plans/PACKAGE-LAB.md` | 旧阶段打包实验文档 | 人工阅读 | 历史参考 | 非主线 | 保留为 archive |
+| `docs/archive-plans/backend-runtime.md` | 旧 runtime 设计说明 | 人工阅读 | 部分命令清单仍有参考价值 | 非主线 | 保留，但与现状有偏差 |
+| `docs/archive-plans/develop计划.md` | 历史开发计划 | 人工阅读 | 历史参考 | 非主线 | 保留为 archive |
+| `docs/archive-plans/打包准备.md` | 历史打包准备 | 人工阅读 | 历史参考 | 非主线 | 保留为 archive |
+| `docs/archive-plans/改进计划.md` | 历史改进计划 | 人工阅读 | 历史参考 | 非主线 | 保留为 archive |
+| `docs/development-handoff.md` | 当前交接主文档 | 人工阅读 | 当前阶段认知基线 | 支撑 | 保留 |
+| `docs/v1.0.1-v1.1.0progress.md` | 当前版本阶段性进度 | 人工阅读 | 版本目标与待办基线 | 支撑 | 保留 |
+
+### 7.8 Tauri 配置与资源层
+
+| 文件 | 职责 | 上游/触发点 | 下游/影响 | 主线地位 | 重复/裁剪结论 |
+| --- | --- | --- | --- | --- | --- |
+| `src-tauri/Cargo.lock` | Rust 锁文件 | Cargo | 依赖固定 | 支撑 | 保留 |
+| `src-tauri/Cargo.toml` | Rust 包定义 | Cargo | Tauri、tokio、rusqlite 依赖 | 主线支撑 | 保留 |
+| `src-tauri/README.md` | Tauri 目录说明 | 人工阅读 | 接手说明 | 支撑 | 内容已过时，需更新 |
+| `src-tauri/build.rs` | Tauri 构建入口 | Cargo build | schema / 构建准备 | 支撑 | 保留 |
+| `src-tauri/gen/schemas/acl-manifests.json` | Tauri 生成 schema | Tauri 构建 | 能力声明参考 | 构建支撑 | 保留 |
+| `src-tauri/gen/schemas/capabilities.json` | Tauri 生成 schema | Tauri 构建 | 能力声明参考 | 构建支撑 | 保留 |
+| `src-tauri/gen/schemas/desktop-schema.json` | Tauri 生成 schema | Tauri 构建 | 桌面配置参考 | 构建支撑 | 保留 |
+| `src-tauri/gen/schemas/windows-schema.json` | Tauri 生成 schema | Tauri 构建 | Windows 配置参考 | 构建支撑 | 保留 |
+| `src-tauri/icons/UCAS Classer.square.png` | 应用图标资源 | Tauri | UI/安装包资源 | 资源 | 保留 |
+| `src-tauri/icons/icon.ico` | Windows 图标资源 | Tauri | 窗口和安装图标 | 资源 | 保留 |
+| `src-tauri/tauri.conf.json` | Tauri 桌面配置 | Tauri 构建/运行 | 窗口、前端目录、identifier | 主线支撑 | 保留 |
+
+### 7.9 Rust 运行时与桥接层
+
+| 文件 | 职责 | 上游/触发点 | 下游/影响 | 主线地位 | 重复/裁剪结论 |
+| --- | --- | --- | --- | --- | --- |
+| `src-tauri/src/app_data.rs` | 从 SQLite 读取 dashboard 数据 | 前端 `load_dashboard_data` | 课程卡片、详情弹窗展示 | 主线必经 | 保留 |
+| `src-tauri/src/app_settings.rs` | 读取/保存应用设置与 runtime marker | 前端 settings、runtime 持久化 | 下载目录、课程范围、调度间隔、last check/collect | 主线必经 | 保留 |
+| `src-tauri/src/auth_runtime.rs` | 调度器核心、并发控制、自动恢复、自动导库 | 应用启动、Tauri command、runtime CLI | auth check、login、collect、db import、interrupt | 主线必经 | 保留，系统核心 |
+| `src-tauri/src/bin/runtime_cli.rs` | 命令行调试 runtime | `npm run runtime:*` | watch/status/check/login/collect/import | 调试主线 | 保留；解释了部分 UI 未用 command 为何仍存在 |
+| `src-tauri/src/db_import.rs` | 从 cache JSON 导入 SQLite | runtime collect、显式 import | 建表、清表、导入课程/资料/通知/作业 | 主线必经 | 保留 |
+| `src-tauri/src/downloads.rs` | 下载桥接，读取设置并调用 Node 下载脚本 | 前端资料下载 | `download:file` | 主线必经 | 保留 |
+| `src-tauri/src/lib.rs` | Rust 模块导出 | main、runtime_cli | 编译组织 | 支撑 | 保留 |
+| `src-tauri/src/main.rs` | Tauri 应用主入口、窗口/托盘、command 暴露 | 桌面启动 | 前端桥接与应用生命周期 | 主线必经 | 保留；但 command 面过宽，应分层整理 |
+| `src-tauri/src/paths.rs` | Rust 侧项目、data、cache、db 路径解析 | runtime、导库、下载 | 主目录与缓存/数据库位置 | 主线支撑 | 保留 |
+| `src-tauri/src/script_runner.rs` | Rust 调用 `npm run` 的桥 | runtime、downloads、open-url | Node 脚本执行与输出解析 | 主线必经 | 保留，但应把 script 名常量集中化 |
+
+## 8. Rust Command 使用面
+
+### 8.1 当前前端实际使用
+
+- `load_dashboard_data`
+- `load_app_settings`
+- `save_app_settings`
+- `get_runtime_status`
+- `start_runtime_scheduler`
+- `run_auth_check`
+- `run_interrupt_login`
+- `run_full_collect`
+- `window_minimize`
+- `window_close`
+- `open_external_url`
+- `open_authenticated_url`
+- `download_protected_file`
+
+### 8.2 当前 UI 未使用，但仍有保留价值
+
+这些 command 不应按“死代码”处理：
+
+- `stop_runtime_scheduler`
+- `apply_runtime_settings`
+- `run_explicit_auth_check`
+- `run_auth_clear`
+- `acknowledge_hourly_refresh_due`
+- `mark_hourly_refresh_due`
+- `mark_collect_refresh_due`
+- `clear_collect_refresh_due`
+- `mark_db_import_due`
+- `clear_db_import_due`
+- `run_db_import`
+
+保留原因：
+
+- `runtime_cli` 仍直接或间接依赖这些运行时能力。
+- 它们构成了 runtime 的完整调试面。
+- 未来若增加高级设置页或调试页，不需要重新改造后端。
+
+建议：
+
+- 不删。
+- 后续把 command 分成：
+  - UI public
+  - Debug/admin
+  两层，降低误判。
+
+## 9. 打包副本漂移附录
+
+本文不把 `ucasclasser-package/` 纳入主索引，但必须记录漂移事实，因为它直接影响发布稳定性。
+
+### 9.1 已确认的明显漂移
+
+| 对比对象 | 结论 |
+| --- | --- |
+| `src/app.js` vs `ucasclasser-package/src/app.js` | 存在设置弹窗实现差异，开发端含更多 legacy helper |
+| `src-tauri/src/main.rs` vs `ucasclasser-package/src-tauri/src/main.rs` | 漂移明显，且打包端含路径迁移、资源目录与窗口逻辑附加能力 |
+| `src-tauri/src/auth_runtime.rs` vs `ucasclasser-package/src-tauri/src/auth_runtime.rs` | 漂移明显，不能假设开发端结论自动等于发布端结论 |
+| `automation/request-collectors/full-collect.ts` vs package 对应文件 | 当前一致 |
+
+### 9.2 这里为什么是稳定性风险
+
+- `.gitignore` 直接忽略整个 `/ucasclasser-package/`。
+- 这意味着主仓可以通过 `npm run check` 与 `cargo check`，但发布副本仍可能保留旧行为。
+- 任何基于主仓做出的删改结论，落地前都必须再与 package 副本做一次同步核验。
+
+### 9.3 建议
+
+- 建立一个固定的“开发端 -> package 端”同步清单，只同步：
+  - `src/`
+  - `src-tauri/`
+  - `automation/`
+  - `shared/`
+- 在下一轮真正删改代码前，先比较以下文件：
+  - `src/app.js`
+  - `src-tauri/src/main.rs`
+  - `src-tauri/src/auth_runtime.rs`
+
+## 10. 直接面向下一轮的删改建议
+
+### 10.1 下一轮可以立刻做
+
+1. 继续核验打包副本是否需要同步删除同类 legacy settings 代码。
+2. 为本地运行时文件补一份生成说明，避免新环境误以为缺文件。
+3. 继续确认 package 副本是否仍需要保留同类旧链参考。
+
+### 10.2 下一轮先重构边界，再考虑删除
+
+1. 评估 `ucasclasser-package/` 是否同步到 `automation/shared/` 命名。
+2. 再决定是否压缩 `automation/auth/browser.ts`、`utils.ts` 的 debug 支撑面。
+3. 把 Rust command 暴露面按 UI/debug 分层。
+
+### 10.3 下一轮不要直接做的事
+
+1. 不要直接删除 `src-tauri/src/main.rs` 中 UI 未用的 runtime command。
+2. 不要把 package 端漂移问题混入主仓“死代码删除”里一起处理。
+
+## 11. 本文结论
+
+当前代码库的核心问题不是“没有主线”，而是“主线已经成立，但旧链、调试链、共享层、打包副本还混在一起”。
+
+因此后续裁剪的正确顺序应当是：
+
+1. 先删主仓确定死代码和不该进 Git 的状态文件。
+2. 再把旧浏览器 collectors 从共享层里剥出来。
+3. 最后处理开发端与打包端的同步机制。
+
+只要按这个顺序推进，删改风险会明显低于“直接大扫除式删除”。

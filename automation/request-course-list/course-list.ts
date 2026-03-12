@@ -1,11 +1,11 @@
 import { writeFile } from 'node:fs/promises'
 import { courseListUrl } from '../auth/config.js'
-import { collectorPaths, ensureCollectorDirs } from '../collectors/paths.js'
+import { collectorPaths, ensureCollectorDirs } from '../shared/cache-paths.js'
 import type {
   CourseListSnapshot,
   CourseSummary,
   SemesterOptionSummary,
-} from '../collectors/types.js'
+} from '../shared/collector-types.js'
 import { createRequestContext, fetchHtml, normalizeText } from '../request-collectors/common.js'
 
 export async function collectCourseListByRequest(): Promise<CourseListSnapshot> {

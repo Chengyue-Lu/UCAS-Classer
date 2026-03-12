@@ -8,8 +8,8 @@ import type {
   MaterialNodeSummary,
   NoticeAttachment,
   NoticeSummary,
-} from '../collectors/types.js'
-import { resolveArtifactHtml } from '../collectors/paths.js'
+} from '../shared/collector-types.js'
+import { resolveArtifactHtml } from '../shared/cache-paths.js'
 
 type AnchorSummary = {
   title: string | null

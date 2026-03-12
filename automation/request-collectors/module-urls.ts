@@ -1,7 +1,7 @@
 import { request } from '@playwright/test'
-import { resolveCourseModuleJson } from '../collectors/paths.js'
-import type { CourseModuleUrls, CourseSummary } from '../collectors/types.js'
-import { writeJsonFile } from '../collectors/utils.js'
+import { resolveCourseModuleJson } from '../shared/cache-paths.js'
+import type { CourseModuleUrls, CourseSummary } from '../shared/collector-types.js'
+import { writeJsonFile } from '../shared/cache-utils.js'
 import { createRequestContext, fetchHtml, resolveModuleUrlsFromHtml } from './common.js'
 
 export async function collectCourseModuleUrlsByRequest(course: CourseSummary): Promise<CourseModuleUrls> {

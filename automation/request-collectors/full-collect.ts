@@ -1,4 +1,9 @@
-import { collectorPaths, resolveAssignmentListJson, resolveMaterialListJson, resolveNoticeListJson } from '../collectors/paths.js'
+import {
+  collectorPaths,
+  resolveAssignmentListJson,
+  resolveMaterialListJson,
+  resolveNoticeListJson,
+} from '../shared/cache-paths.js'
 import { collectCourseListByRequest } from '../request-course-list/course-list.js'
 import type {
   AssignmentListSnapshot,
@@ -7,8 +12,8 @@ import type {
   FullCollectSummary,
   MaterialListSnapshot,
   NoticeListSnapshot,
-} from '../collectors/types.js'
-import { pruneStaleCourseCache, runWithConcurrency, writeJsonFile } from '../collectors/utils.js'
+} from '../shared/collector-types.js'
+import { pruneStaleCourseCache, runWithConcurrency, writeJsonFile } from '../shared/cache-utils.js'
 import {
   collectRequestMaterials,
   createRequestContext,

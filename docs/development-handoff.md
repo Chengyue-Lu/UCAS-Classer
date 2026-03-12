@@ -1,5 +1,5 @@
 # UCAS Classer 开发交接表
-
+<!-- markdownlint-disable -->
 ## 项目现状
 - 当前开发主线已经从页面驱动逐步迁到 `API / request` 路线。
 - 登录仍保留浏览器参与，但登录后的绝大多数动作已经不再依赖可见页面。
