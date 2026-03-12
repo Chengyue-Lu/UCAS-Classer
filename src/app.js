@@ -112,6 +112,20 @@ function intervalMinutesToSecs(value, fallbackSeconds) {
   return Math.max(1, Math.round(minutes)) * 60
 }
 
+function formatSettingsInterval(value, fallbackMinutes) {
+  const minutes = Number(intervalSecsToMinutes(value, fallbackMinutes))
+  if (!Number.isFinite(minutes) || minutes <= 0) {
+    return `${fallbackMinutes} m`
+  }
+
+  if (minutes < 60) {
+    return `${minutes} m`
+  }
+
+  const hours = minutes / 60
+  return `${Number.isInteger(hours) ? hours : hours.toFixed(1)} h`
+}
+
 function formatRelativeTime(timestamp) {
   if (!timestamp) {
     return '从未'
@@ -580,7 +594,18 @@ function resetModal() {
 }
 
 function syncSettingsMeta(settings) {
-  modalMeta.replaceChildren(...createSettingsMeta(settings))
+  const downloadChip = createDetailChip('下载目录', settings.downloadDir || '未设置')
+  downloadChip.classList.add('detail-chip--wide')
+
+  const summaryRow = document.createElement('div')
+  summaryRow.className = 'settings-meta-row'
+  summaryRow.append(
+    createDetailChip('Check', formatSettingsInterval(settings.authCheckIntervalSecs, 3)),
+    createDetailChip('Collect', formatSettingsInterval(settings.collectIntervalSecs, 60)),
+    createDetailChip('Cookie', formatSettingsInterval(settings.cookieRefreshIntervalSecs, 60)),
+  )
+
+  modalMeta.replaceChildren(downloadChip, summaryRow)
 }
 
 async function downloadResource({ url, suggestedName, referer }) {
@@ -797,6 +822,7 @@ function openSettingsModal(feedbackMessage = '') {
     },
   )
   authCheckField.field.classList.add('settings-field--compact')
+  authCheckField.field.querySelector('.settings-field__label').textContent = 'CHECK 间隔'
   authCheckField.control.type = 'number'
   authCheckField.control.min = '1'
 
@@ -809,6 +835,7 @@ function openSettingsModal(feedbackMessage = '') {
     },
   )
   collectField.field.classList.add('settings-field--compact')
+  collectField.field.querySelector('.settings-field__label').textContent = 'COLLECT 间隔'
   collectField.control.type = 'number'
   collectField.control.min = '1'
 
@@ -821,11 +848,13 @@ function openSettingsModal(feedbackMessage = '') {
     },
   )
   cookieRefreshField.field.classList.add('settings-field--compact')
+  cookieRefreshField.field.querySelector('.settings-field__label').textContent = 'COOKIE 刷新间隔'
   cookieRefreshField.control.type = 'number'
   cookieRefreshField.control.min = '1'
 
   const scopeField = document.createElement('div')
   scopeField.className = 'settings-field'
+  scopeField.classList.add('settings-field--scope')
   scopeField.append(
     Object.assign(document.createElement('span'), {
       className: 'settings-field__label',
@@ -901,8 +930,12 @@ function openSettingsModal(feedbackMessage = '') {
   intervalRow.className = 'settings-inline-row'
   intervalRow.append(authCheckField.field, collectField.field, cookieRefreshField.field)
 
+  const settingsHint = document.createElement('p')
+  settingsHint.className = 'settings-form__hint'
+  settingsHint.textContent = '所有时间设置单位均为分钟。'
+
   settingsForm.append(downloadField.field, scopeField, intervalRow)
-  modalBody.append(settingsForm)
+  modalBody.append(settingsForm, settingsHint)
 
   modalActions.append(
     createDetailAction(

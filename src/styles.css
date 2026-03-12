@@ -1044,15 +1044,19 @@ select {
 .settings-meta-row {
   width: 100%;
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
 }
 
 .settings-meta-row .detail-chip {
   width: 100%;
   min-width: 0;
+  min-height: 40px;
+  flex-direction: column;
   justify-content: center;
+  gap: 4px;
   padding: 0 8px;
+  text-align: center;
 }
 
 .settings-inline-row {
@@ -1069,8 +1073,8 @@ select {
 }
 
 .settings-scope-toggle__button {
-  min-height: 34px;
-  padding: 0 8px;
+  min-height: 44px;
+  padding: 0 10px;
   border: 1px solid var(--line);
   border-radius: 12px;
   background: rgba(255, 252, 247, 0.95);
@@ -1090,9 +1094,11 @@ select {
 }
 
 .settings-scope-toggle__button[data-active='true'] {
-  background: rgba(166, 143, 121, 0.18);
-  border-color: rgba(166, 143, 121, 0.36);
-  color: #5f4a39;
+  background: rgba(166, 143, 121, 0.28);
+  border-color: rgba(166, 143, 121, 0.52);
+  color: #3f3126;
+  font-weight: 700;
+  box-shadow: inset 0 0 0 1px rgba(255, 248, 238, 0.45);
 }
 
 .settings-field {
@@ -1104,8 +1110,11 @@ select {
 .settings-field__label {
   font-size: 11px;
   letter-spacing: 0.07em;
-  text-transform: uppercase;
   color: var(--muted);
+}
+
+.settings-field--scope .settings-field__label {
+  display: none;
 }
 
 .settings-field__control {
@@ -1122,6 +1131,19 @@ select {
 .settings-field--compact .settings-field__label {
   font-size: 10px;
   letter-spacing: 0.08em;
+}
+
+.settings-form__hint {
+  margin: 2px 2px 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+
+.settings-meta-row .detail-chip strong {
+  margin-left: 0;
+  font-size: 16px;
+  line-height: 1;
 }
 
 .settings-field--compact .settings-field__control {
