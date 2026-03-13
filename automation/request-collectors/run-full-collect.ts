@@ -3,11 +3,13 @@ import { runRequestFullCollect } from './full-collect.js'
 type CliOptions = {
   concurrency?: number
   headed: boolean
+  mode: 'full' | 'summary'
 }
 
 function parseArgs(argv: string[]): CliOptions {
   let concurrency: number | undefined
   const headed = argv.includes('--headed')
+  let mode: 'full' | 'summary' = 'full'
 
   for (let index = 0; index < argv.length; index += 1) {
     if (argv[index] === '--concurrency') {
@@ -17,11 +19,20 @@ function parseArgs(argv: string[]): CliOptions {
       }
       index += 1
     }
+
+    if (argv[index] === '--mode') {
+      const value = argv[index + 1]
+      if (value === 'full' || value === 'summary') {
+        mode = value
+      }
+      index += 1
+    }
   }
 
   return {
     concurrency,
     headed,
+    mode,
   }
 }
 

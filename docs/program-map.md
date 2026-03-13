@@ -9,6 +9,7 @@
 - 课程分目录的最终落盘规则为：`downloadDir / courseDownloadSubdirs[courseId] / materialParentPath / fileName`。
 - 资料批量下载当前实现为前端串行调用 `download_protected_file`，以减少 UI 卡顿并提供逐项进度反馈。
 - package 端继续使用系统路径存储；开发端与打包端运行共享层通过同步脚本保持一致。
+- collect 已拆成 `full / summary` 两种模式：启动与手动 Collect 走 `full`，后台常态走 `summary`，summary 发现 diff 后把下一次自动 collect 升级为 `full`。
 
 ### 1.1 分析边界
 
@@ -36,6 +37,7 @@
 ```powershell
 npm run check
 cargo check --manifest-path src-tauri/Cargo.toml
+node scripts/sync-package-runtime.mjs --check
 ```
 
 ### 1.3 当前一句话结构
@@ -119,7 +121,7 @@ sequenceDiagram
   AU-->>RT: auth ok / fail
 
   alt auth ok
-    RT->>SR: npm run collect:all -- --concurrency 4
+    RT->>SR: npm run collect:all -- --mode full --concurrency 4
     SR->>CL: request 全量采集
     CL->>RC: 先拉课程列表
     RC-->>CL: course-list.json/html
@@ -137,14 +139,23 @@ sequenceDiagram
 
   U->>FE: 点击 Collect
   FE->>TA: run_full_collect
-  TA->>RT: 显式采集
-  RT->>SR: collect:all
+  TA->>RT: 显式 full collect
+  RT->>SR: collect:all --mode full
   RT->>DB: run_db_import_inner
 
   U->>FE: 下载资料
   FE->>TA: download_protected_file
   TA->>SR: npm run download:file
   SR->>AU: 复用 storage-state 发请求
+
+  U->>FE: 批量下载资料
+  FE->>FE: 计算课程分目录 + 资料父级目录
+  FE->>TA: 串行 download_protected_file
+  TA->>SR: 多次 npm run download:file
+
+  Note over RT,SR: 后台自动 collect 默认执行 collect:all --mode summary
+  Note over RT,SR: summary 若发现 diff，则持久化 pendingFullCollectAfterDiff
+  Note over RT,SR: 下一次自动 collect 自动切回 collect:all --mode full
 ```
 
 ## 3. 入口与触发点 Map
@@ -153,12 +164,15 @@ sequenceDiagram
 
 | 入口 | 触发代码 | 下游 | 输出 |
 | --- | --- | --- | --- |
-| 启动应用 | `src/app.js -> initialize()` | `start_runtime_scheduler`、`load_settings`、`load_dashboard_data` | 初始状态、首轮 `check + collect` |
+| 启动应用 | `src/app.js -> initialize()` | `start_runtime_scheduler`、`load_settings`、`load_dashboard_data` | 初始状态、首轮 `check + full collect` |
 | 点击 `Check` | `runRuntimeAction('check')` | `run_auth_check` | 登录态显式校验 |
 | 点击 `Collect` | `runRuntimeAction('collect')` | `run_full_collect` | 全量采集、导库、刷新 UI |
 | 点击 `Login` | `runRuntimeAction('login')` | `run_interrupt_login` | 手动进入登录恢复链 |
 | 打开设置 | `openSettingsModal()` | `load_app_settings`、`save_app_settings` | 保存下载目录、学期过滤、调度间隔 |
+| 选择下载目录 | `pickFolderPath()` | `pick_folder_path` | 打开系统文件夹选择器并回填设置 |
+| 编辑课程分目录 | `openCourseSubdirModal()` | `save_app_settings` | 保存 `courseDownloadSubdirs` |
 | 下载资料附件 | `downloadResource()` | `download_protected_file` | 用登录态保存文件到本地 |
+| 批量下载资料 | `downloadMaterialBatch()` | 前端串行 `download_protected_file` | 保留课程子目录与资料树层级批量落盘 |
 | 打开通知/作业原页 | `openAuthenticatedUrl()` | `open_authenticated_url` | 用现有登录态后台打开页面 |
 | 关闭窗口 | `window_close` | `destroy_main_window` | 仅销毁窗口，应用驻留托盘 |
 
@@ -167,11 +181,12 @@ sequenceDiagram
 | 触发源 | 触发条件 | 下游 | 备注 |
 | --- | --- | --- | --- |
 | Runtime scheduler | 应用启动 | 初始 `auth:check` | 避免长时间无状态 |
-| Runtime scheduler | 应用启动 | 初始 `collect:all` | 让首次 collect 基准明确 |
+| Runtime scheduler | 应用启动 | 初始 `collect:all --mode full` | 让首次 collect 基准明确 |
 | Runtime scheduler | `auth_check_interval_secs` 到时 | `auth:check` | 可带 cookie refresh |
-| Runtime scheduler | `collect_interval_secs` 到时 | `run_full_collect` | 仅在非中断、非登录中运行 |
+| Runtime scheduler | `collect_interval_secs` 到时 | `summary/full collect` | 默认 `summary`；若已挂起 full 标记，则自动升级为 `full` |
 | Runtime scheduler | 检测到新 cache 未导库 | `run_db_import_inner` | 自动导入 SQLite |
 | 下载桥接 | 前端或详情弹窗触发 | `download:file` | 单次按需，不走 scheduler |
+| 下载状态行 | 批量下载结束且全成功 | 20 秒后自动回到 `Waiting` | 失败态不会自动清除 |
 
 ## 4. 主线判断
 
@@ -245,10 +260,10 @@ sequenceDiagram
 
 | 问题 | 位置 | 影响 | 建议 |
 | --- | --- | --- | --- |
-| 开发端与打包端双份源码漂移不可见 | `.gitignore` 忽略 `/ucasclasser-package/` | 主仓改完后，打包副本可能继续跑旧逻辑 | 建立最小同步清单，或把 package 副本改为可比对的同步流程 |
+| 发布前未执行同步检查会导致 package 壳层与共享层脱节 | `scripts/sync-package-runtime.mjs` + `.gitignore` 忽略 `/ucasclasser-package/` | 主仓改完后，package 本地目录可能缺共享文件或残留旧内容 | 固定执行 `--check -> --write -> package build` |
 | 跟踪本地状态与日志文件 | `data/*` | 污染版本控制，增加错误基线 | 从仓库移除本地状态文件 |
 | 前端存在未调用 legacy 分支 | `src/app.js` | 增加维护成本，掩盖真实入口 | 删除死代码，只保留当前 settings modal |
-| package 副本尚未同步共享层命名 | `ucasclasser-package/` 仍可能保留旧目录结构 | 开发端和打包端认知继续漂移 | 最后统一处理 package 同步 |
+| 下载链路调试信息仍较弱 | `src/app.js`、`src-tauri/src/downloads.rs` | 路径问题出现时定位成本高 | 后续补最小下载参数日志或调试开关 |
 
 ### 6.2 中优先级
 
@@ -328,9 +343,11 @@ sequenceDiagram
 | 文件 | 职责 | 上游/触发点 | 下游/影响 | 主线地位 | 重复/裁剪结论 |
 | --- | --- | --- | --- | --- | --- |
 | `automation/downloads/download-file.ts` | 用登录态直接下载受保护文件 | `download:file`、Rust downloads bridge | 保存本地文件并回传 JSON 结果 | 主线必经 | 保留 |
+| `automation/downloads/common.ts` | 下载公共能力：文件名推断、相对目录规范化、冲突策略、登录页检测 | `download-file.ts`、`download-batch.ts` | 保证单文件/批量下载路径与命名规则一致 | 主线支撑 | 保留 |
+| `automation/downloads/download-batch.ts` | 批量下载 CLI，复用单套 request context 顺序下载多文件 | `download:batch`、本地调试 | 输出整批 JSON 结果 | 主线支撑 | 当前前端未直接使用，但保留为后端批量桥接能力 |
 | `automation/request-collectors/README.md` | request 全量采集说明 | 人工阅读 | 主线采集说明 | 支撑 | 保留；与现状基本一致 |
 | `automation/request-collectors/common.ts` | request 共享能力：context、HTML 抓取、通知/作业解析、资料树递归 | request collect、request course-list | 生成通知/资料/作业结构 | 主线必经 | 保留 |
-| `automation/request-collectors/full-collect.ts` | request 主线全量采集编排 | `collect:all`、runtime collect | 全套 cache 输出 | 主线必经 | 保留，当前采集主入口 |
+| `automation/request-collectors/full-collect.ts` | request 采集编排，支持 `full/summary` 模式 | `collect:all`、runtime collect | cache 输出、摘要 diff、下一次 full 回补信号 | 主线必经 | 保留，当前采集主入口 |
 | `automation/request-collectors/module-urls.ts` | request 版模块入口解析 | request full collect | `course-module-*.json` | 主线必经 | 保留 |
 | `automation/request-collectors/run-full-collect.ts` | request full collect CLI 包装 | `package.json -> collect:all` | 启动 request 全量采集 | 主线必经 | 保留 |
 | `automation/request-course-list/README.md` | request 课程列表说明 | 人工阅读 | 主线课程列表说明 | 支撑 | 保留 |
@@ -373,11 +390,11 @@ sequenceDiagram
 | 文件 | 职责 | 上游/触发点 | 下游/影响 | 主线地位 | 重复/裁剪结论 |
 | --- | --- | --- | --- | --- | --- |
 | `src-tauri/src/app_data.rs` | 从 SQLite 读取 dashboard 数据 | 前端 `load_dashboard_data` | 课程卡片、详情弹窗展示 | 主线必经 | 保留 |
-| `src-tauri/src/app_settings.rs` | 读取/保存应用设置与 runtime marker | 前端 settings、runtime 持久化 | 下载目录、课程范围、调度间隔、last check/collect | 主线必经 | 保留 |
+| `src-tauri/src/app_settings.rs` | 读取/保存应用设置与 runtime marker | 前端 settings、runtime 持久化 | 下载目录、课程范围、课程分目录、调度间隔、last check/collect、`pendingFullCollectAfterDiff` | 主线必经 | 保留 |
 | `src-tauri/src/auth_runtime.rs` | 调度器核心、并发控制、自动恢复、自动导库 | 应用启动、Tauri command、runtime CLI | auth check、login、collect、db import、interrupt | 主线必经 | 保留，系统核心 |
 | `src-tauri/src/bin/runtime_cli.rs` | 命令行调试 runtime | `npm run runtime:*` | watch/status/check/login/collect/import | 调试主线 | 保留；解释了部分 UI 未用 command 为何仍存在 |
 | `src-tauri/src/db_import.rs` | 从 cache JSON 导入 SQLite | runtime collect、显式 import | 建表、清表、导入课程/资料/通知/作业 | 主线必经 | 保留 |
-| `src-tauri/src/downloads.rs` | 下载桥接，读取设置并调用 Node 下载脚本 | 前端资料下载 | `download:file` | 主线必经 | 保留 |
+| `src-tauri/src/downloads.rs` | 下载桥接，读取设置并调用 Node 下载脚本 | 前端单文件/批量下载 | `download:file`、`download:batch` | 主线必经 | 保留；当前负责课程分目录与资料树路径拼接 |
 | `src-tauri/src/lib.rs` | Rust 模块导出 | main、runtime_cli | 编译组织 | 支撑 | 保留 |
 | `src-tauri/src/main.rs` | Tauri 应用主入口、窗口/托盘、command 暴露 | 桌面启动 | 前端桥接与应用生命周期 | 主线必经 | 保留；但 command 面过宽，应分层整理 |
 | `src-tauri/src/paths.rs` | Rust 侧项目、data、cache、db 路径解析 | runtime、导库、下载 | 主目录与缓存/数据库位置 | 主线支撑 | 保留 |
@@ -395,11 +412,13 @@ sequenceDiagram
 - `run_auth_check`
 - `run_interrupt_login`
 - `run_full_collect`
+- `pick_folder_path`
 - `window_minimize`
 - `window_close`
 - `open_external_url`
 - `open_authenticated_url`
 - `download_protected_file`
+- `download_protected_files`
 
 ### 8.2 当前 UI 未使用，但仍有保留价值
 
@@ -435,14 +454,14 @@ sequenceDiagram
 
 本文不把 `ucasclasser-package/` 纳入主索引，但必须记录漂移事实，因为它直接影响发布稳定性。
 
-### 9.1 已确认的明显漂移
+### 9.1 当前明确保留为 package-shell 的差异
 
 | 对比对象 | 结论 |
 | --- | --- |
-| `src/app.js` vs `ucasclasser-package/src/app.js` | 存在设置弹窗实现差异，开发端含更多 legacy helper |
-| `src-tauri/src/main.rs` vs `ucasclasser-package/src-tauri/src/main.rs` | 漂移明显，且打包端含路径迁移、资源目录与窗口逻辑附加能力 |
-| `src-tauri/src/auth_runtime.rs` vs `ucasclasser-package/src-tauri/src/auth_runtime.rs` | 漂移明显，不能假设开发端结论自动等于发布端结论 |
-| `automation/request-collectors/full-collect.ts` vs package 对应文件 | 当前一致 |
+| `src-tauri/src/main.rs` vs `ucasclasser-package/src-tauri/src/main.rs` | 差异保留且合理；package 端负责系统路径、资源目录、打包壳层与窗口附加逻辑 |
+| `src-tauri/src/script_runner.rs` vs `ucasclasser-package/src-tauri/src/script_runner.rs` | 差异保留且合理；package 端负责 bundled runtime 与 package 专属脚本入口 |
+| `src-tauri/src/paths.rs` vs `ucasclasser-package/src-tauri/src/paths.rs` | 差异保留且合理；package 端继续走系统路径 |
+| `src/app.js` / `automation/**` / `src-tauri/src/{app_data,app_settings,auth_runtime,db_import,downloads,lib}.rs` | 当前通过 `sync-package-runtime.mjs` 单向同步，已不应视为手工漂移区 |
 
 ### 9.2 这里为什么是稳定性风险
 
@@ -452,29 +471,26 @@ sequenceDiagram
 
 ### 9.3 建议
 
-- 建立一个固定的“开发端 -> package 端”同步清单，只同步：
-  - `src/`
-  - `src-tauri/`
-  - `automation/`
-  - `shared/`
-- 在下一轮真正删改代码前，先比较以下文件：
-  - `src/app.js`
-  - `src-tauri/src/main.rs`
-  - `src-tauri/src/auth_runtime.rs`
+- 继续把“运行共享层”和“package 壳层”分开思考，不再回到双端手工对齐。
+- 每次准备打包前固定执行：
+  - `node scripts/sync-package-runtime.mjs --check`
+  - `node scripts/sync-package-runtime.mjs --write`
+  - `npm run check` in `ucasclasser-package`
+  - `npm run tauri:build` in `ucasclasser-package`
 
 ## 10. 直接面向下一轮的删改建议
 
 ### 10.1 下一轮可以立刻做
 
-1. 继续核验打包副本是否需要同步删除同类 legacy settings 代码。
+1. 为下载链补最小调试日志或可开关 tracing，降低路径类问题排查成本。
 2. 为本地运行时文件补一份生成说明，避免新环境误以为缺文件。
-3. 继续确认 package 副本是否仍需要保留同类旧链参考。
+3. 继续确认通知/作业附件是否需要复用当前批量下载能力。
 
 ### 10.2 下一轮先重构边界，再考虑删除
 
-1. 评估 `ucasclasser-package/` 是否同步到 `automation/shared/` 命名。
-2. 再决定是否压缩 `automation/auth/browser.ts`、`utils.ts` 的 debug 支撑面。
-3. 把 Rust command 暴露面按 UI/debug 分层。
+1. 再决定是否压缩 `automation/auth/browser.ts`、`utils.ts` 的 debug 支撑面。
+2. 把 Rust command 暴露面按 UI/debug 分层。
+3. 评估是否把前端串行批量下载重新收口回后端批量桥接，同时保留进度显示。
 
 ### 10.3 下一轮不要直接做的事
 
@@ -519,12 +535,12 @@ sequenceDiagram
 
 ## 12. 本文结论
 
-当前代码库的核心问题不是“没有主线”，而是“主线已经成立，但旧链、调试链、共享层、打包副本还混在一起”。
+当前代码库的主线现在已经比较清晰：`request` 采集、Rust runtime、前端设置/下载链和 package 单向同步机制都已经落稳，最初那几轮“先拆主线、再剥离旧链、最后建立双端同步”的工作已经基本完成。
 
-因此后续裁剪的正确顺序应当是：
+因此下一阶段不再以“大规模裁剪”为主，而应转向：
 
-1. 先删主仓确定死代码和不该进 Git 的状态文件。
-2. 再把旧浏览器 collectors 从共享层里剥出来。
-3. 最后处理开发端与打包端的同步机制。
+1. 围绕下载链、调试面和命令边界做小步加固。
+2. 持续压缩 debug/legacy 仅作本地归档参考的面积。
+3. 把发布前同步检查、package 构建和长期稳定性验证固化成标准流程。
 
 只要按这个顺序推进，删改风险会明显低于“直接大扫除式删除”。

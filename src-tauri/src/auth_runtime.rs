@@ -10,8 +10,11 @@ use tokio::spawn;
 use tokio::task::spawn_blocking;
 use tokio::time::sleep;
 
-use crate::app_settings::{load_app_settings, persist_runtime_markers};
-use crate::db_import::{import_latest_cache, last_imported_collect_finished_at, latest_collect_finished_at};
+use crate::app_settings::{load_app_settings, persist_runtime_markers, save_app_settings};
+use crate::db_import::{
+    import_latest_cache, last_imported_collect_finished_at, latest_collect_finished_at,
+    read_latest_collect_summary,
+};
 use crate::paths::storage_state_file;
 use crate::script_runner::{
     run_hidden_script, spawn_visible_login_script, storage_state_modified_ms,
@@ -135,6 +138,21 @@ impl CheckSource {
     }
 }
 
+#[derive(Copy, Clone, Eq, PartialEq)]
+enum CollectMode {
+    Full,
+    Summary,
+}
+
+impl CollectMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            CollectMode::Full => "full",
+            CollectMode::Summary => "summary",
+        }
+    }
+}
+
 fn script_failure_message(script: &str, output: &ScriptOutput) -> String {
     let stderr = output.stderr.trim();
     if !stderr.is_empty() {
@@ -154,6 +172,7 @@ pub struct RuntimeService {
     scheduler_stop: Mutex<Option<Arc<AtomicBool>>>,
     login_generation: Mutex<u64>,
     active_login_pid: Mutex<Option<u32>>,
+    next_scheduled_collect_force_full: Mutex<bool>,
 }
 
 impl RuntimeService {
@@ -163,6 +182,7 @@ impl RuntimeService {
             scheduler_stop: Mutex::new(None),
             login_generation: Mutex::new(0),
             active_login_pid: Mutex::new(None),
+            next_scheduled_collect_force_full: Mutex::new(false),
         })
     }
 
@@ -383,15 +403,42 @@ impl RuntimeService {
             && snapshot.last_auth_check_ok == Some(true)
     }
 
+    fn request_next_scheduled_collect_full(&self) {
+        let mut guard = self
+            .next_scheduled_collect_force_full
+            .lock()
+            .expect("next scheduled collect force-full lock poisoned");
+        *guard = true;
+    }
+
+    fn take_scheduled_collect_mode(&self) -> CollectMode {
+        let mut guard = self
+            .next_scheduled_collect_force_full
+            .lock()
+            .expect("next scheduled collect force-full lock poisoned");
+        if *guard {
+            *guard = false;
+            return CollectMode::Full;
+        }
+
+        let settings = load_app_settings().unwrap_or_default();
+        if settings.pending_full_collect_after_diff {
+            CollectMode::Full
+        } else {
+            CollectMode::Summary
+        }
+    }
+
     fn maybe_spawn_collect_if_due(self: &Arc<Self>) -> bool {
         let snapshot = self.snapshot();
         if !snapshot.collect_refresh_due || !self.can_run_scheduled_collect() {
             return false;
         }
 
+        let collect_mode = self.take_scheduled_collect_mode();
         let service = Arc::clone(self);
         spawn(async move {
-            let _ = service.run_full_collect().await;
+            let _ = service.run_collect(collect_mode).await;
         });
 
         true
@@ -473,9 +520,10 @@ impl RuntimeService {
             return;
         }
 
+        let collect_mode = self.take_scheduled_collect_mode();
         let service = Arc::clone(self);
         spawn(async move {
-            let _ = service.run_full_collect().await;
+            let _ = service.run_collect(collect_mode).await;
         });
     }
 
@@ -520,6 +568,7 @@ impl RuntimeService {
         });
 
         if run_initial_collect {
+            self.request_next_scheduled_collect_full();
             self.mark_collect_due();
         }
 
@@ -857,6 +906,10 @@ impl RuntimeService {
     }
 
     pub async fn run_full_collect(self: &Arc<Self>) -> Result<RuntimeSnapshot, String> {
+        self.run_collect(CollectMode::Full).await
+    }
+
+    async fn run_collect(self: &Arc<Self>, collect_mode: CollectMode) -> Result<RuntimeSnapshot, String> {
         {
             let snapshot = self.snapshot();
             if snapshot.collect_refresh_running {
@@ -875,14 +928,20 @@ impl RuntimeService {
             snapshot.last_error = None;
         });
 
-        let result = spawn_blocking(|| {
-            run_hidden_script("collect:all", &["--concurrency", "4"])
+        let mode_arg = collect_mode.as_str().to_string();
+        let result = spawn_blocking(move || {
+            run_hidden_script("collect:all", &["--mode", &mode_arg, "--concurrency", "4"])
         })
         .await
         .map_err(|error| format!("failed to join collect:all task: {error}"))??;
 
-        let collect_version = latest_collect_finished_at()?;
-        let collect_ok = result.success && collect_version.is_some();
+        let collect_summary = read_latest_collect_summary()?;
+        let collect_ok = result.success
+            && collect_summary.as_ref().is_some_and(|summary| {
+                summary.mode == collect_mode.as_str()
+                    && summary.failure_count == 0
+                    && summary.success_count == summary.course_count
+            });
         let finished_at = now_ms();
         self.update(|snapshot| {
             snapshot.collect_refresh_running = false;
@@ -903,16 +962,20 @@ impl RuntimeService {
                 snapshot.collect_refresh_due = false;
                 snapshot.last_error = None;
             } else if result.success {
-                snapshot.last_error = Some(
-                    "collect:all finished but full-collect-summary.json is incomplete".to_string(),
-                );
+                snapshot.last_error =
+                    Some("collect:all finished but full-collect-summary.json is incomplete".to_string());
             } else {
                 snapshot.last_error = Some(script_failure_message("collect:all", &result));
             }
         });
 
         if collect_ok {
-            self.run_db_import_inner().await?;
+            self.apply_collect_follow_up(collect_mode, collect_summary.as_ref())?;
+            if collect_mode == CollectMode::Full {
+                self.run_db_import_inner().await?;
+            } else {
+                let _ = self.sync_db_import_due_from_cache();
+            }
             Ok(self.snapshot())
         } else {
             Err(
@@ -921,6 +984,27 @@ impl RuntimeService {
                     .unwrap_or_else(|| "collect refresh failed".to_string()),
             )
         }
+    }
+
+    fn apply_collect_follow_up(
+        &self,
+        collect_mode: CollectMode,
+        collect_summary: Option<&crate::db_import::FullCollectSummary>,
+    ) -> Result<(), String> {
+        let mut settings = load_app_settings().unwrap_or_default();
+
+        match collect_mode {
+            CollectMode::Full => {
+                settings.pending_full_collect_after_diff = false;
+            }
+            CollectMode::Summary => {
+                settings.pending_full_collect_after_diff =
+                    collect_summary.is_some_and(|summary| summary.has_diff);
+            }
+        }
+
+        save_app_settings(settings)?;
+        Ok(())
     }
 
     pub async fn run_db_import(self: &Arc<Self>) -> Result<RuntimeSnapshot, String> {

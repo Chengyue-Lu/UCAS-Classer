@@ -8,6 +8,7 @@
 - 主界面新增下载状态行：`Waiting / Downloading / Success / Fail`，成功态 20 秒后自动回到 `Waiting`。
 - 登录态存储路径已对齐；开发端兼容仓库内 `data/auth/`，打包端继续走系统路径，不做回退。
 - `ucasclasser-package/` 继续只维护 package 壳层，运行共享层通过 `scripts/sync-package-runtime.mjs` 下发。
+- collect 已分成 `summary / full`：启动首次 collect 与手动 Collect 固定走 `full`，后台自动 collect 默认走 `summary`，当 summary 发现摘要 diff 时，会挂起“下一次自动 full”标记。
 ## 项目现状
 - 当前开发主线已经从页面驱动逐步迁到 `API / request` 路线。
 - 登录仍保留浏览器参与，但登录后的绝大多数动作已经不再依赖可见页面。
@@ -62,7 +63,8 @@
   - `npm run download:batch -- --manifest <path> --output-dir <dir> --conflict overwrite`
 - 采集 / 导库
   - `npm run courses:collect`
-  - `npm run collect:all -- --concurrency 4`
+  - `npm run collect:all -- --mode full --concurrency 4`
+  - `npm run collect:all -- --mode summary --concurrency 4`
   - `npm run runtime:import`
 - 检查
   - `npm run check`
@@ -71,7 +73,9 @@
 ## 运行时调度现状
 - `check`、`collect`、`cookie refresh` 已分离。
 - `check` 与 `collect` 允许并行，不再沿用旧浏览器链路的互斥思路。
-- 应用启动时会主动做一轮 `check + collect`，规避“首轮 collect 计时基准不直观”的问题。
+- 应用启动时会主动做一轮 `check + full collect`，规避“首轮 collect 计时基准不直观”的问题。
+- 后台自动 collect 默认走 `summary`，不抓通知详情，也不触发导库。
+- `summary` 发现课程摘要变化后，不在同轮补跑，而是把下一次自动 collect 升级为 `full`。
 - `cookie refresh` 仍然单独存在，因为它仍需后台浏览器。
 
 ## 设置页现状

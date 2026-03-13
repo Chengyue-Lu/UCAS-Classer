@@ -173,12 +173,16 @@ export type CourseCollectionSnapshot = {
 }
 
 export type FullCollectSummary = {
+  mode: 'full' | 'summary'
   startedAt: string
   finishedAt: string
   courseCount: number
   concurrency: number
   successCount: number
   failureCount: number
+  hasDiff: boolean
+  pendingFullCollectAfterDiff: boolean
+  changedCourseIds: string[]
   jsonPath: string
   courses: Array<{
     courseId: string

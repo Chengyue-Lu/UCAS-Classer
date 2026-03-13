@@ -5,9 +5,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::paths::{app_settings_file, data_dir, project_root};
 
-const DEFAULT_AUTH_CHECK_INTERVAL_SECS: u64 = 3 * 60;
-const DEFAULT_COLLECT_INTERVAL_SECS: u64 = 60 * 60;
-const DEFAULT_COOKIE_REFRESH_INTERVAL_SECS: u64 = 60 * 60;
+const DEFAULT_AUTH_CHECK_INTERVAL_SECS: u64 = 180 * 60;
+const DEFAULT_COLLECT_INTERVAL_SECS: u64 = 15 * 60;
+const DEFAULT_COOKIE_REFRESH_INTERVAL_SECS: u64 = 720 * 60;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -15,6 +15,7 @@ pub struct AppSettings {
     pub download_dir: String,
     pub course_scope: String,
     pub course_download_subdirs: std::collections::BTreeMap<String, String>,
+    pub pending_full_collect_after_diff: bool,
     pub auth_check_interval_secs: u64,
     pub collect_interval_secs: u64,
     pub cookie_refresh_interval_secs: u64,
@@ -29,6 +30,7 @@ impl Default for AppSettings {
             download_dir: project_root().display().to_string(),
             course_scope: "all".to_string(),
             course_download_subdirs: std::collections::BTreeMap::new(),
+            pending_full_collect_after_diff: false,
             auth_check_interval_secs: DEFAULT_AUTH_CHECK_INTERVAL_SECS,
             collect_interval_secs: DEFAULT_COLLECT_INTERVAL_SECS,
             cookie_refresh_interval_secs: DEFAULT_COOKIE_REFRESH_INTERVAL_SECS,

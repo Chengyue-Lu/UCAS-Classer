@@ -23,11 +23,19 @@ pub struct DatabaseImportResult {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct FullCollectSummary {
-    finished_at: String,
-    course_count: usize,
-    success_count: usize,
-    failure_count: usize,
+pub struct FullCollectSummary {
+    #[serde(default = "default_collect_mode")]
+    pub mode: String,
+    pub finished_at: String,
+    pub course_count: usize,
+    pub success_count: usize,
+    pub failure_count: usize,
+    #[serde(default)]
+    pub has_diff: bool,
+    #[serde(default)]
+    pub pending_full_collect_after_diff: bool,
+    #[serde(default)]
+    pub changed_course_ids: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -172,11 +180,20 @@ pub fn latest_collect_finished_at() -> Result<Option<String>, String> {
     }
 
     let summary: FullCollectSummary = read_json_file(&summary_path)?;
-    if summary.failure_count > 0 || summary.success_count != summary.course_count {
+    if !is_summary_complete(&summary) || summary.mode != "full" {
         return Ok(None);
     }
 
     Ok(Some(summary.finished_at))
+}
+
+pub fn read_latest_collect_summary() -> Result<Option<FullCollectSummary>, String> {
+    let summary_path = full_collect_summary_file();
+    if !summary_path.exists() {
+        return Ok(None);
+    }
+
+    read_json_file(&summary_path).map(Some)
 }
 
 pub fn last_imported_collect_finished_at() -> Result<Option<String>, String> {
@@ -209,11 +226,14 @@ pub fn import_latest_cache() -> Result<DatabaseImportResult, String> {
     }
 
     let summary: FullCollectSummary = read_json_file(&summary_path)?;
-    if summary.failure_count > 0 || summary.success_count != summary.course_count {
+    if !is_summary_complete(&summary) {
         return Err(format!(
             "full collect summary is incomplete: success={} failure={} course_count={}",
             summary.success_count, summary.failure_count, summary.course_count
         ));
+    }
+    if summary.mode != "full" {
+        return Err("latest collect summary was produced by summary mode; full import is not allowed".to_string());
     }
 
     let course_list: CourseListSnapshot = read_json_file(&course_list_file())?;
@@ -772,6 +792,14 @@ fn read_json_file<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T, String
         .map_err(|error| format!("failed to read `{}`: {error}", path.display()))?;
     serde_json::from_str::<T>(&contents)
         .map_err(|error| format!("failed to parse `{}`: {error}", path.display()))
+}
+
+fn default_collect_mode() -> String {
+    "full".to_string()
+}
+
+fn is_summary_complete(summary: &FullCollectSummary) -> bool {
+    summary.failure_count == 0 && summary.success_count == summary.course_count
 }
 
 fn read_optional_json<T: for<'de> Deserialize<'de>>(path: &PathBuf) -> Result<Option<T>, String> {

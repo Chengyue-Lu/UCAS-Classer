@@ -30,6 +30,7 @@ const state = {
     downloadDir: '',
     courseScope: 'all',
     courseDownloadSubdirs: {},
+    pendingFullCollectAfterDiff: false,
     authCheckIntervalSecs: 180,
     collectIntervalSecs: 3600,
     cookieRefreshIntervalSecs: 3600,

@@ -9,6 +9,7 @@ export const collectorPaths = {
   courseListScreenshot: resolveCachePath('course-list.png'),
   moduleIndexJson: resolveCachePath('course-module-index.json'),
   fullCollectSummaryJson: resolveCachePath('full-collect-summary.json'),
+  collectFingerprintStateJson: resolveCachePath('collect-fingerprint-state.json'),
 }
 
 export async function ensureCollectorDirs() {

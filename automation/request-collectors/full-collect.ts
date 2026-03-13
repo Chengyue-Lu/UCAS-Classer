@@ -1,3 +1,5 @@
+import { readFile } from 'node:fs/promises'
+
 import {
   collectorPaths,
   resolveAssignmentListJson,
@@ -28,8 +30,10 @@ import { collectCourseModuleUrlsByRequest } from './module-urls.js'
 export async function runRequestFullCollect(options?: {
   concurrency?: number
   headed?: boolean
+  mode?: 'full' | 'summary'
 }): Promise<FullCollectSummary> {
   const startedAt = new Date().toISOString()
+  const mode = options?.mode === 'summary' ? 'summary' : 'full'
   const courseList = await collectCourseListByRequest()
 
   await pruneStaleCourseCache(courseList.courses.map((course) => course.courseId))
@@ -45,7 +49,12 @@ export async function runRequestFullCollect(options?: {
     async (course: CourseSummary) => {
       try {
         const modules = await collectCourseModuleUrlsByRequest(course)
-        const { materials, notices, assignments } = await collectCoursePayloads(modules)
+        const { materials, notices, assignments } = await collectCoursePayloads(modules, mode)
+        const summaryFingerprint = createCourseSummaryFingerprint({
+          materials,
+          notices,
+          assignments,
+        })
 
         return {
           courseId: course.courseId,
@@ -54,6 +63,7 @@ export async function runRequestFullCollect(options?: {
           materialCount: materials.fileCount,
           noticeCount: notices.itemCount,
           assignmentCount: assignments.itemCount,
+          summaryFingerprint,
         }
       } catch (error) {
         return {
@@ -66,15 +76,44 @@ export async function runRequestFullCollect(options?: {
     },
   )
 
+  const previousFingerprints = await loadCollectFingerprintState()
+  const changedCourseIds =
+    mode === 'summary'
+      ? results
+          .filter(
+            (result): result is typeof result & {
+              courseId: string
+              ok: true
+              summaryFingerprint: string
+            } => result.ok && typeof result.summaryFingerprint === 'string',
+          )
+          .filter((result) => previousFingerprints[result.courseId] !== result.summaryFingerprint)
+          .map((result) => result.courseId)
+      : []
+  const hasDiff = mode === 'summary' && changedCourseIds.length > 0
+  const collectSucceeded = results.every((result) => result.ok)
+
   const summary: FullCollectSummary = {
+    mode,
     startedAt,
     finishedAt: new Date().toISOString(),
     courseCount: courseList.courseCount,
     concurrency,
     successCount: results.filter((result) => result.ok).length,
     failureCount: results.filter((result) => !result.ok).length,
+    hasDiff,
+    pendingFullCollectAfterDiff: hasDiff,
+    changedCourseIds,
     jsonPath: collectorPaths.fullCollectSummaryJson,
-    courses: results,
+    courses: results.map((result) => ({
+      courseId: result.courseId,
+      courseName: result.courseName,
+      ok: result.ok,
+      error: result.error,
+      materialCount: result.materialCount,
+      noticeCount: result.noticeCount,
+      assignmentCount: result.assignmentCount,
+    })),
   }
 
   await writeJsonFile(summary.jsonPath, summary)
@@ -84,10 +123,31 @@ export async function runRequestFullCollect(options?: {
     courses: courseList.courses,
   })
 
+  if (mode === 'full' && collectSucceeded) {
+    await writeJsonFile(collectorPaths.collectFingerprintStateJson, {
+      updatedAt: summary.finishedAt,
+      mode,
+      courseFingerprints: Object.fromEntries(
+        results
+          .filter(
+            (result): result is typeof result & {
+              courseId: string
+              ok: true
+              summaryFingerprint: string
+            } => result.ok && typeof result.summaryFingerprint === 'string',
+          )
+          .map((result) => [result.courseId, result.summaryFingerprint]),
+      ),
+    })
+  }
+
   return summary
 }
 
-async function collectCoursePayloads(modules: CourseModuleUrls): Promise<{
+async function collectCoursePayloads(
+  modules: CourseModuleUrls,
+  mode: 'full' | 'summary',
+): Promise<{
   materials: MaterialListSnapshot
   notices: NoticeListSnapshot
   assignments: AssignmentListSnapshot
@@ -97,7 +157,7 @@ async function collectCoursePayloads(modules: CourseModuleUrls): Promise<{
   try {
     const [materials, notices, assignments] = await Promise.all([
       collectMaterialSnapshot(apiContext, modules),
-      collectNoticeSnapshot(apiContext, modules),
+      collectNoticeSnapshot(apiContext, modules, mode),
       collectAssignmentSnapshot(apiContext, modules),
     ])
 
@@ -163,6 +223,7 @@ async function collectMaterialSnapshot(
 async function collectNoticeSnapshot(
   apiContext: Awaited<ReturnType<typeof createRequestContext>>,
   modules: CourseModuleUrls,
+  mode: 'full' | 'summary',
 ): Promise<NoticeListSnapshot> {
   if (!modules.noticesUrl) {
     return {
@@ -183,7 +244,9 @@ async function collectNoticeSnapshot(
 
   const fetch = await fetchHtml(apiContext, modules.noticesUrl, `notice-list-${modules.courseId}`)
   const items = extractNotices(fetch.bodyText, fetch.finalUrl)
-  await fillNoticeDetails(apiContext, items)
+  if (mode === 'full') {
+    await fillNoticeDetails(apiContext, items)
+  }
 
   return {
     collectedAt: new Date().toISOString(),
@@ -199,6 +262,69 @@ async function collectNoticeSnapshot(
     jsonPath: resolveNoticeListJson(modules.courseId),
     items,
   }
+}
+
+async function loadCollectFingerprintState(): Promise<Record<string, string>> {
+  try {
+    const raw = await readFile(collectorPaths.collectFingerprintStateJson, 'utf8')
+    const parsed = JSON.parse(raw) as {
+      courseFingerprints?: Record<string, string>
+    }
+    return parsed.courseFingerprints ?? {}
+  } catch {
+    return {}
+  }
+}
+
+function createCourseSummaryFingerprint(input: {
+  materials: MaterialListSnapshot
+  notices: NoticeListSnapshot
+  assignments: AssignmentListSnapshot
+}): string {
+  const materials = input.materials.items.map((item) => ({
+    nodeId: item.nodeId,
+    parentNodeId: item.parentNodeId,
+    nodeType: item.nodeType,
+    path: item.path,
+    depth: item.depth,
+    dataId: item.dataId,
+    folderId: item.folderId,
+    name: item.name,
+    type: item.type,
+    uploader: item.uploader,
+    size: item.size,
+    createdAt: item.createdAt,
+    downloadUrl: item.downloadUrl,
+    readUrl: item.readUrl,
+    openUrl: item.openUrl,
+    source: item.source,
+  }))
+  const notices = input.notices.items.map((item) => ({
+    noticeId: item.noticeId,
+    noticeEnc: item.noticeEnc,
+    title: item.title,
+    detailUrl: item.detailUrl,
+    publishedAt: item.publishedAt,
+    publisher: item.publisher,
+    rawText: item.rawText,
+  }))
+  const assignments = input.assignments.items.map((item) => ({
+    title: item.title,
+    workUrl: item.workUrl,
+    status: item.status,
+    startTime: item.startTime,
+    endTime: item.endTime,
+    rawText: item.rawText,
+    workId: item.workId ?? null,
+    workAnswerId: item.workAnswerId ?? null,
+    reEdit: item.reEdit ?? null,
+  }))
+
+  return JSON.stringify({
+    materials,
+    notices,
+    assignments,
+  })
 }
 
 async function collectAssignmentSnapshot(
