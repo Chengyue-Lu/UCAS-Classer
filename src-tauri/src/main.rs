@@ -829,7 +829,6 @@ fn pick_folder_path(app: AppHandle, initial_path: Option<String>) -> Result<Opti
 
 #[tauri::command]
 async fn download_protected_file(
-    course_id: Option<String>,
     url: String,
     suggested_name: Option<String>,
     referer: Option<String>,
@@ -837,7 +836,6 @@ async fn download_protected_file(
     conflict_policy: Option<String>,
 ) -> Result<ProtectedDownloadResult, String> {
     download_protected_file_impl(
-        course_id,
         url,
         suggested_name,
         referer,

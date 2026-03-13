@@ -22,7 +22,6 @@ pub struct ProtectedDownloadResult {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DownloadRequest {
-    pub course_id: Option<String>,
     pub url: String,
     pub suggested_name: Option<String>,
     pub referer: Option<String>,
@@ -50,7 +49,6 @@ pub struct BatchDownloadResult {
 }
 
 pub async fn download_protected_file(
-    course_id: Option<String>,
     url: String,
     suggested_name: Option<String>,
     referer: Option<String>,
@@ -59,7 +57,6 @@ pub async fn download_protected_file(
 ) -> Result<ProtectedDownloadResult, String> {
     tokio::task::spawn_blocking(move || {
         download_protected_file_blocking(
-            course_id,
             url,
             suggested_name,
             referer,
@@ -78,7 +75,6 @@ pub async fn download_protected_files(requests: Vec<DownloadRequest>) -> Result<
 }
 
 fn download_protected_file_blocking(
-    course_id: Option<String>,
     url: String,
     suggested_name: Option<String>,
     referer: Option<String>,
@@ -103,11 +99,7 @@ fn download_protected_file_blocking(
         owned_args.push(referer);
     }
 
-    if let Some(relative_dir) = resolve_effective_relative_subdir(
-        &settings,
-        course_id.as_deref(),
-        relative_subdir.as_deref(),
-    ) {
+    if let Some(relative_dir) = normalize_relative_subdir(relative_subdir.as_deref()) {
         owned_args.push("--relative-dir".to_string());
         owned_args.push(relative_dir);
     }
@@ -162,11 +154,7 @@ fn download_protected_files_blocking(requests: Vec<DownloadRequest>) -> Result<B
     let resolved_requests = requests
         .into_iter()
         .map(|request| DownloadRequest {
-            relative_subdir: resolve_effective_relative_subdir(
-                &settings,
-                request.course_id.as_deref(),
-                request.relative_subdir.as_deref(),
-            ),
+            relative_subdir: normalize_relative_subdir(request.relative_subdir.as_deref()),
             ..request
         })
         .collect::<Vec<_>>();
@@ -249,35 +237,6 @@ fn normalize_conflict_policy(value: Option<&str>, fallback: &str) -> String {
         Some("skip") => "skip".to_string(),
         Some("rename") => "rename".to_string(),
         _ => fallback.to_string(),
-    }
-}
-
-fn resolve_effective_relative_subdir(
-    settings: &crate::app_settings::AppSettings,
-    course_id: Option<&str>,
-    relative_subdir: Option<&str>,
-) -> Option<String> {
-    let course_subdir = course_id
-        .and_then(|id| settings.course_download_subdirs.get(id))
-        .and_then(|value| normalize_relative_subdir(Some(value.as_str())));
-    let item_subdir = normalize_relative_subdir(relative_subdir);
-
-    join_relative_subdirs(course_subdir.as_deref(), item_subdir.as_deref())
-}
-
-fn join_relative_subdirs(first: Option<&str>, second: Option<&str>) -> Option<String> {
-    let joined = [first, second]
-        .into_iter()
-        .flatten()
-        .flat_map(|part| part.split('/'))
-        .map(str::trim)
-        .filter(|segment| !segment.is_empty())
-        .collect::<Vec<_>>();
-
-    if joined.is_empty() {
-        None
-    } else {
-        Some(joined.join("/"))
     }
 }
 

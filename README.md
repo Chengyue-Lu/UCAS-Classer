@@ -43,6 +43,10 @@
 - `docs/program-map.md`：当前主线、调用图、重复实现与裁剪分析总表
 - `docs/archive-plans/`：已完成的计划与阶段性文档
 
+## 使用说明
+
+- [使用说明](./使用说明.md)
+
 ## 开源协议
 
 [GNU GPLv3](./LICENSE)

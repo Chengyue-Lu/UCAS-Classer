@@ -926,7 +926,6 @@ function scheduleDockCollapse() {
 }
 
 async function downloadResource({
-  courseId = null,
   url,
   suggestedName,
   referer,
@@ -947,7 +946,6 @@ async function downloadResource({
 
   try {
     const result = await invokeTauriCommand('download_protected_file', {
-      courseId,
       url,
       suggestedName: suggestedName ?? null,
       referer,
@@ -1059,7 +1057,6 @@ async function downloadMaterialBatch(course, items) {
 
       try {
         const result = await invokeTauriCommand('download_protected_file', {
-          courseId: request.courseId ?? null,
           url: request.url,
           suggestedName: request.suggestedName ?? null,
           referer: request.referer,
@@ -1156,7 +1153,6 @@ function openDetailModal(kind, course, item) {
       '附件',
       createAttachmentList(item.attachments || [], (attachment) => {
         downloadResource({
-          courseId: course.courseId,
           url: attachment.url,
           suggestedName: attachment.title || '附件',
           referer: item.detailUrl || course.noticesUrl || null,
@@ -1185,7 +1181,6 @@ function openDetailModal(kind, course, item) {
           '下载到本地',
           () => {
             downloadResource({
-              courseId: course.courseId,
               url: item.downloadUrl,
               suggestedName: item.name || item.title,
               referer: course.materialsUrl || null,
