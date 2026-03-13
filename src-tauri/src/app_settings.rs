@@ -16,6 +16,12 @@ pub struct AppSettings {
     pub course_scope: String,
     pub course_download_subdirs: std::collections::BTreeMap<String, String>,
     pub pending_full_collect_after_diff: bool,
+    pub enable_auto_dock_collapse: bool,
+    pub dock_side: Option<String>,
+    pub dock_expanded_width: Option<u32>,
+    pub dock_expanded_height: Option<u32>,
+    pub dock_last_x: Option<i32>,
+    pub dock_last_y: Option<i32>,
     pub auth_check_interval_secs: u64,
     pub collect_interval_secs: u64,
     pub cookie_refresh_interval_secs: u64,
@@ -31,6 +37,12 @@ impl Default for AppSettings {
             course_scope: "all".to_string(),
             course_download_subdirs: std::collections::BTreeMap::new(),
             pending_full_collect_after_diff: false,
+            enable_auto_dock_collapse: false,
+            dock_side: None,
+            dock_expanded_width: None,
+            dock_expanded_height: None,
+            dock_last_x: None,
+            dock_last_y: None,
             auth_check_interval_secs: DEFAULT_AUTH_CHECK_INTERVAL_SECS,
             collect_interval_secs: DEFAULT_COLLECT_INTERVAL_SECS,
             cookie_refresh_interval_secs: DEFAULT_COOKIE_REFRESH_INTERVAL_SECS,
@@ -114,6 +126,13 @@ fn normalize_settings(settings: &mut AppSettings) {
         settings.cookie_refresh_interval_secs,
         DEFAULT_COOKIE_REFRESH_INTERVAL_SECS,
     );
+    settings.dock_side = match settings.dock_side.as_deref() {
+        Some("left") => Some("left".to_string()),
+        Some("right") => Some("right".to_string()),
+        _ => None,
+    };
+    settings.dock_expanded_width = normalize_optional_dimension(settings.dock_expanded_width);
+    settings.dock_expanded_height = normalize_optional_dimension(settings.dock_expanded_height);
 }
 
 fn normalize_interval_secs(value: u64, default_value: u64) -> u64 {
@@ -122,6 +141,10 @@ fn normalize_interval_secs(value: u64, default_value: u64) -> u64 {
     } else {
         value
     }
+}
+
+fn normalize_optional_dimension(value: Option<u32>) -> Option<u32> {
+    value.filter(|dimension| *dimension > 0)
 }
 
 fn normalize_relative_subdir(value: &str) -> String {

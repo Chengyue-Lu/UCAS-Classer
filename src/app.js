@@ -16,7 +16,10 @@ const modalFeedback = document.querySelector('#modal-feedback')
 const modalBody = document.querySelector('#modal-body')
 const modalClose = document.querySelector('#modal-close')
 const modalPanel = document.querySelector('.modal-panel')
+const dockHandle = document.querySelector('#dock-handle')
 let downloadStatusResetTimer = null
+let dockCollapseTimer = null
+let dockStatePollTimer = null
 
 const state = {
   runtime: null,
@@ -31,9 +34,15 @@ const state = {
     courseScope: 'all',
     courseDownloadSubdirs: {},
     pendingFullCollectAfterDiff: false,
-    authCheckIntervalSecs: 180,
-    collectIntervalSecs: 3600,
-    cookieRefreshIntervalSecs: 3600,
+    enableAutoDockCollapse: false,
+    dockSide: null,
+    dockExpandedWidth: null,
+    dockExpandedHeight: null,
+    dockLastX: null,
+    dockLastY: null,
+    authCheckIntervalSecs: 180 * 60,
+    collectIntervalSecs: 15 * 60,
+    cookieRefreshIntervalSecs: 720 * 60,
   },
   activeAction: null,
   downloadProgress: {
@@ -46,6 +55,11 @@ const state = {
   modalOpen: false,
   modalType: null,
   lastSeenDbImportFinishedAt: null,
+  windowDock: {
+    enabled: false,
+    state: 'normal',
+    side: null,
+  },
 }
 
 function createFallbackRuntimeSnapshot() {
@@ -99,6 +113,30 @@ async function waitForTauriInvoke(timeoutMs = 4000) {
   }
 
   return null
+}
+
+function clearDockCollapseTimer() {
+  if (dockCollapseTimer !== null) {
+    window.clearTimeout(dockCollapseTimer)
+    dockCollapseTimer = null
+  }
+}
+
+function clearDockStatePollTimer() {
+  if (dockStatePollTimer !== null) {
+    window.clearInterval(dockStatePollTimer)
+    dockStatePollTimer = null
+  }
+}
+
+function syncDockSurface() {
+  appShell.dataset.dockState = state.windowDock.state || 'normal'
+  appShell.dataset.dockSide = state.windowDock.side || ''
+  dockHandle.hidden = state.windowDock.state !== 'collapsed'
+
+  if (state.windowDock.state === 'collapsed' && state.modalOpen) {
+    closeDetailModal()
+  }
 }
 
 function formatCount(value) {
@@ -805,9 +843,9 @@ function syncSettingsMeta(settings) {
   const summaryRow = document.createElement('div')
   summaryRow.className = 'settings-meta-row'
   summaryRow.append(
-    createDetailChip('Check', formatSettingsInterval(settings.authCheckIntervalSecs, 3)),
-    createDetailChip('Collect', formatSettingsInterval(settings.collectIntervalSecs, 60)),
-    createDetailChip('Cookie', formatSettingsInterval(settings.cookieRefreshIntervalSecs, 60)),
+    createDetailChip('Check', formatSettingsInterval(settings.authCheckIntervalSecs, 180)),
+    createDetailChip('Collect', formatSettingsInterval(settings.collectIntervalSecs, 15)),
+    createDetailChip('Cookie', formatSettingsInterval(settings.cookieRefreshIntervalSecs, 720)),
   )
 
   modalMeta.replaceChildren(downloadChip, summaryRow)
@@ -823,6 +861,59 @@ async function pickFolderPath(initialPath = '') {
   }
 
   return typeof selectedPath === 'string' ? selectedPath : ''
+}
+
+async function getWindowDockState() {
+  const dockState = await invokeTauriCommand('get_window_dock_state')
+  if (!dockState) {
+    return {
+      enabled: Boolean(state.settings.enableAutoDockCollapse),
+      state: 'normal',
+      side: null,
+    }
+  }
+
+  return dockState
+}
+
+async function refreshWindowDockState() {
+  const dockState = await getWindowDockState()
+  state.windowDock = {
+    enabled: Boolean(dockState.enabled),
+    state: dockState.state || 'normal',
+    side: dockState.side || null,
+  }
+  syncDockSurface()
+}
+
+async function expandDockedWindow() {
+  clearDockCollapseTimer()
+  try {
+    await invokeTauriCommand('expand_docked_window')
+  } finally {
+    await refreshWindowDockState()
+  }
+}
+
+async function collapseDockedWindow() {
+  clearDockCollapseTimer()
+  try {
+    await invokeTauriCommand('collapse_docked_window')
+  } finally {
+    await refreshWindowDockState()
+  }
+}
+
+function scheduleDockCollapse() {
+  if (state.modalOpen || state.windowDock.state !== 'expanded') {
+    return
+  }
+
+  clearDockCollapseTimer()
+  dockCollapseTimer = window.setTimeout(() => {
+    dockCollapseTimer = null
+    collapseDockedWindow()
+  }, 400)
 }
 
 async function downloadResource({
@@ -1170,6 +1261,31 @@ function createSettingsActionRow() {
   return row
 }
 
+function createSettingsToggleField(label, hint, isActive, onToggle) {
+  const field = document.createElement('div')
+  field.className = 'settings-field settings-field--toggle'
+
+  const title = document.createElement('span')
+  title.className = 'settings-field__label'
+  title.textContent = label
+
+  const toggle = document.createElement('button')
+  toggle.className = 'settings-toggle'
+  toggle.type = 'button'
+  toggle.dataset.active = String(Boolean(isActive))
+  toggle.innerHTML = `
+    <span class="settings-toggle__text">
+      <span class="settings-toggle__title">${label}</span>
+      <span class="settings-toggle__hint">${hint}</span>
+    </span>
+    <span class="settings-toggle__pill">${isActive ? 'ON' : 'OFF'}</span>
+  `
+  toggle.addEventListener('click', onToggle)
+
+  field.append(title, toggle)
+  return { field, toggle }
+}
+
 async function openCourseSubdirModal(feedbackMessage = '') {
   state.modalType = 'course-subdirs'
   resetModal()
@@ -1318,6 +1434,7 @@ async function openCourseSubdirModal(feedbackMessage = '') {
           state.settings = saved
           setModalFeedback('课程分目录已保存。', 'success')
           renderCourses()
+          refreshWindowDockState()
         } catch (error) {
           setModalFeedback(String(error), 'error')
         }
@@ -1353,7 +1470,7 @@ function openSettingsModal(feedbackMessage = '') {
   })
   const authCheckField = createSettingsField(
     'CHECK 间隔',
-    intervalSecsToMinutes(state.settings.authCheckIntervalSecs, 3),
+    intervalSecsToMinutes(state.settings.authCheckIntervalSecs, 180),
     {
       fieldName: 'authCheckIntervalSecs',
       placeholder: '默认 3',
@@ -1364,7 +1481,7 @@ function openSettingsModal(feedbackMessage = '') {
   )
   const collectField = createSettingsField(
     'COLLECT 间隔',
-    intervalSecsToMinutes(state.settings.collectIntervalSecs, 60),
+    intervalSecsToMinutes(state.settings.collectIntervalSecs, 15),
     {
       fieldName: 'collectIntervalSecs',
       placeholder: '默认 60',
@@ -1375,13 +1492,27 @@ function openSettingsModal(feedbackMessage = '') {
   )
   const cookieRefreshField = createSettingsField(
     'COOKIE 刷新间隔',
-    intervalSecsToMinutes(state.settings.cookieRefreshIntervalSecs, 60),
+    intervalSecsToMinutes(state.settings.cookieRefreshIntervalSecs, 720),
     {
       fieldName: 'cookieRefreshIntervalSecs',
       placeholder: '默认 60',
       type: 'number',
       min: '1',
       compact: true,
+    },
+  )
+
+  let dockEnabled = Boolean(state.settings.enableAutoDockCollapse)
+  const dockToggleField = createSettingsToggleField(
+    '自动窗口收起',
+    '窗口拖到左右边缘后自动收起，移入边缘栏再展开。',
+    dockEnabled,
+    () => {
+      dockEnabled = !dockEnabled
+      dockToggleField.toggle.dataset.active = String(dockEnabled)
+      dockToggleField.toggle.querySelector('.settings-toggle__pill').textContent = dockEnabled
+        ? 'ON'
+        : 'OFF'
     },
   )
 
@@ -1487,7 +1618,13 @@ function openSettingsModal(feedbackMessage = '') {
   settingsHint.className = 'settings-form__hint'
   settingsHint.textContent = '所有时间设置单位均为分钟。课程分目录会在主下载目录下生效。'
 
-  settingsForm.append(downloadField.field, downloadActionRow, scopeField, intervalRow)
+  settingsForm.append(
+    downloadField.field,
+    downloadActionRow,
+    dockToggleField.field,
+    scopeField,
+    intervalRow,
+  )
   modalBody.append(settingsForm, settingsHint)
 
   modalActions.append(
@@ -1497,10 +1634,11 @@ function openSettingsModal(feedbackMessage = '') {
         const nextSettings = {
           ...state.settings,
           downloadDir: downloadField.control.value.trim(),
+          enableAutoDockCollapse: dockEnabled,
           courseScope: state.settings.courseScope || selectedScope,
-          authCheckIntervalSecs: intervalMinutesToSecs(authCheckField.control.value, 180),
-          collectIntervalSecs: intervalMinutesToSecs(collectField.control.value, 3600),
-          cookieRefreshIntervalSecs: intervalMinutesToSecs(cookieRefreshField.control.value, 3600),
+          authCheckIntervalSecs: intervalMinutesToSecs(authCheckField.control.value, 180 * 60),
+          collectIntervalSecs: intervalMinutesToSecs(collectField.control.value, 15 * 60),
+          cookieRefreshIntervalSecs: intervalMinutesToSecs(cookieRefreshField.control.value, 720 * 60),
         }
 
         try {
@@ -1514,10 +1652,14 @@ function openSettingsModal(feedbackMessage = '') {
           }
 
           state.settings = saved
+          if (!saved.enableAutoDockCollapse) {
+            await invokeTauriCommand('exit_dock_mode')
+          }
           selectedScope = state.settings.courseScope || selectedScope
           syncSettingsMeta(state.settings)
           renderScopeButtons()
           renderCourses()
+          refreshWindowDockState()
           setModalFeedback('设置已保存。', 'success')
         } catch (error) {
           setModalFeedback(String(error), 'error')
@@ -1721,6 +1863,28 @@ function bindTitleOverflowRefresh() {
   })
 }
 
+function bindDockInteractions() {
+  if (!dockHandle) {
+    return
+  }
+
+  dockHandle.addEventListener('mouseenter', () => {
+    if (state.windowDock.state === 'collapsed') {
+      expandDockedWindow()
+    }
+  })
+
+  appShell.addEventListener('mouseenter', () => {
+    clearDockCollapseTimer()
+  })
+
+  appShell.addEventListener('mouseleave', (event) => {
+    if (event.relatedTarget === null) {
+      scheduleDockCollapse()
+    }
+  })
+}
+
 async function initializeRuntime() {
   const started = await invokeTauriCommand('start_runtime_scheduler')
   state.runtime = started || createFallbackRuntimeSnapshot()
@@ -1732,12 +1896,15 @@ async function initialize() {
   bindRuntimeButtons()
   bindModalControls()
   bindTitleOverflowRefresh()
+  bindDockInteractions()
   closeDetailModal()
+  syncDockSurface()
 
   const invoke = await waitForTauriInvoke()
   if (!invoke) {
     state.runtime = createFallbackRuntimeSnapshot()
     syncRuntimePanel()
+    syncDockSurface()
     const errorNode = document.querySelector('#runtime-error')
     if (errorNode) {
       errorNode.hidden = false
@@ -1747,6 +1914,7 @@ async function initialize() {
   }
 
   await Promise.all([loadSettings(), initializeRuntime()])
+  await refreshWindowDockState()
   await Promise.all([refreshRuntimeStatus(), loadDashboardData()])
 
   window.setInterval(() => {
@@ -1756,6 +1924,11 @@ async function initialize() {
   window.setInterval(() => {
     refreshRuntimeStatus()
   }, 3000)
+
+  clearDockStatePollTimer()
+  dockStatePollTimer = window.setInterval(() => {
+    refreshWindowDockState()
+  }, 120)
 }
 
 initialize()
