@@ -1,4 +1,14 @@
 # UCAS Classer 程序 Map
+
+## 0. 2026-03-13 / v1.0.4 补充
+
+- 主窗口运行链已新增“自动侧收”子状态机：`normal -> collapsed -> expanded -> normal`。
+- 侧收职责当前分层为：
+  - 前端 `src/index.html` / `src/app.js` / `src/styles.css` 负责设置开关、边缘短条 UI、hover 收回计时与状态呈现。
+  - 开发端与 package 壳层 `main.rs` 负责窗口几何读取、左右边缘判定、展开/收起尺寸恢复、窗口插值动画与托盘重开恢复。
+- 侧收判定当前基于窗口外框与当前显示器 `work_area` 左右边缘的区间命中，不依赖鼠标坐标。
+- 设置弹窗当前已收口为“内容区 -> 反馈 -> 操作按钮”的底部 footer 结构；课程范围与自动侧收为点击即生效项。
+- package 壳层与开发端壳层的窗口行为已重新对齐；共享层继续通过同步脚本下发。
 <!-- markdownlint-disable MD013 MD033 -->
 
 ## 1. 基线与范围
@@ -168,7 +178,7 @@ sequenceDiagram
 | 点击 `Check` | `runRuntimeAction('check')` | `run_auth_check` | 登录态显式校验 |
 | 点击 `Collect` | `runRuntimeAction('collect')` | `run_full_collect` | 全量采集、导库、刷新 UI |
 | 点击 `Login` | `runRuntimeAction('login')` | `run_interrupt_login` | 手动进入登录恢复链 |
-| 打开设置 | `openSettingsModal()` | `load_app_settings`、`save_app_settings` | 保存下载目录、学期过滤、调度间隔 |
+| 打开设置 | `openSettingsModal()` | `load_app_settings`、`save_app_settings` | 保存下载目录、学期过滤、自动侧收和调度间隔 |
 | 选择下载目录 | `pickFolderPath()` | `pick_folder_path` | 打开系统文件夹选择器并回填设置 |
 | 编辑课程分目录 | `openCourseSubdirModal()` | `save_app_settings` | 保存 `courseDownloadSubdirs` |
 | 下载资料附件 | `downloadResource()` | `download_protected_file` | 用登录态保存文件到本地 |

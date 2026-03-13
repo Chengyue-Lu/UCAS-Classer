@@ -826,7 +826,16 @@ function setModalFeedback(message, tone = 'neutral') {
   modalFeedback.dataset.tone = tone
 }
 
+function applyDefaultModalChromeOrder() {
+  modalPanel.append(modalMeta, modalActions, modalFeedback, modalBody)
+}
+
+function applySettingsModalChromeOrder() {
+  modalPanel.append(modalMeta, modalBody, modalFeedback, modalActions)
+}
+
 function resetModal() {
+  applyDefaultModalChromeOrder()
   modalPanel.dataset.layout = 'default'
   modalKind.textContent = '详情'
   modalTitle.textContent = '详情'
@@ -1273,13 +1282,25 @@ function createSettingsToggleField(label, hint, isActive, onToggle) {
   toggle.className = 'settings-toggle'
   toggle.type = 'button'
   toggle.dataset.active = String(Boolean(isActive))
-  toggle.innerHTML = `
-    <span class="settings-toggle__text">
-      <span class="settings-toggle__title">${label}</span>
-      <span class="settings-toggle__hint">${hint}</span>
-    </span>
-    <span class="settings-toggle__pill">${isActive ? 'ON' : 'OFF'}</span>
-  `
+  const text = document.createElement('span')
+  text.className = 'settings-toggle__text'
+
+  const toggleTitle = document.createElement('span')
+  toggleTitle.className = 'settings-toggle__title'
+  toggleTitle.textContent = label
+  text.append(toggleTitle)
+
+  if (hint) {
+    const toggleHint = document.createElement('span')
+    toggleHint.className = 'settings-toggle__hint'
+    toggleHint.textContent = hint
+    text.append(toggleHint)
+  }
+
+  const pill = document.createElement('span')
+  pill.className = 'settings-toggle__pill'
+  pill.textContent = isActive ? 'ON' : 'OFF'
+  toggle.append(text, pill)
   toggle.addEventListener('click', onToggle)
 
   field.append(title, toggle)
@@ -1290,6 +1311,7 @@ async function openCourseSubdirModal(feedbackMessage = '') {
   state.modalType = 'course-subdirs'
   resetModal()
   modalPanel.dataset.layout = 'settings'
+  applySettingsModalChromeOrder()
 
   modalKind.textContent = 'Subdirs'
   modalTitle.textContent = '课程分目录'
@@ -1456,6 +1478,7 @@ function openSettingsModal(feedbackMessage = '') {
   state.modalType = 'settings'
   resetModal()
   modalPanel.dataset.layout = 'settings'
+  applySettingsModalChromeOrder()
 
   modalKind.textContent = 'Settings'
   modalTitle.textContent = '应用设置'
@@ -1503,18 +1526,61 @@ function openSettingsModal(feedbackMessage = '') {
   )
 
   let dockEnabled = Boolean(state.settings.enableAutoDockCollapse)
+  let dockSaving = false
   const dockToggleField = createSettingsToggleField(
     '自动窗口收起',
     '窗口拖到左右边缘后自动收起，移入边缘栏再展开。',
     dockEnabled,
-    () => {
+    async () => {
+      if (dockSaving) {
+        return
+      }
+
+      const previousEnabled = dockEnabled
       dockEnabled = !dockEnabled
+      dockSaving = true
+      dockToggleField.toggle.disabled = true
       dockToggleField.toggle.dataset.active = String(dockEnabled)
       dockToggleField.toggle.querySelector('.settings-toggle__pill').textContent = dockEnabled
         ? 'ON'
         : 'OFF'
+
+      try {
+        const saved = await invokeTauriCommand('save_app_settings', {
+          settings: {
+            ...state.settings,
+            enableAutoDockCollapse: dockEnabled,
+          },
+        })
+
+        if (!saved) {
+          dockEnabled = previousEnabled
+          setModalFeedback('自动侧收设置未保存。', 'error')
+          return
+        }
+
+        state.settings = saved
+        dockEnabled = Boolean(saved.enableAutoDockCollapse)
+        if (!dockEnabled) {
+          await invokeTauriCommand('exit_dock_mode')
+        }
+        syncSettingsMeta(state.settings)
+        refreshWindowDockState()
+        setModalFeedback('自动侧收设置已更新。', 'success')
+      } catch (error) {
+        dockEnabled = previousEnabled
+        setModalFeedback(String(error), 'error')
+      } finally {
+        dockToggleField.toggle.disabled = false
+        dockSaving = false
+        dockToggleField.toggle.dataset.active = String(dockEnabled)
+        dockToggleField.toggle.querySelector('.settings-toggle__pill').textContent = dockEnabled
+          ? 'ON'
+          : 'OFF'
+      }
     },
   )
+  dockToggleField.toggle.querySelector('.settings-toggle__hint')?.remove()
 
   const downloadActionRow = createSettingsActionRow()
   const pickButton = createDetailAction('选择文件夹', async () => {
