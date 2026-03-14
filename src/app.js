@@ -2,8 +2,6 @@ const appShell = document.querySelector('#app-shell')
 const courseList = document.querySelector('#course-list')
 const courseCount = document.querySelector('#course-count')
 const emptyState = document.querySelector('#empty-state')
-const runtimeStatus = document.querySelector('#runtime-status')
-const runtimeCheckAge = document.querySelector('#runtime-check-age')
 const runtimeCollectAge = document.querySelector('#runtime-collect-age')
 const downloadStatus = document.querySelector('#download-status')
 const runtimeButtons = document.querySelectorAll('[data-runtime-action]')
@@ -20,6 +18,7 @@ const dockHandle = document.querySelector('#dock-handle')
 let downloadStatusResetTimer = null
 let dockCollapseTimer = null
 let dockStatePollTimer = null
+let dockStateEventUnlisten = null
 
 const state = {
   runtime: null,
@@ -89,6 +88,15 @@ function getTauriInvoke() {
   return window.__TAURI_INTERNALS__?.invoke ?? window.__TAURI__?.core?.invoke ?? null
 }
 
+function getTauriEventListen() {
+  return (
+    window.__TAURI__?.event?.listen ??
+    window.__TAURI_INTERNALS__?.event?.listen ??
+    window.__TAURI_INTERNALS__?.plugins?.event?.listen ??
+    null
+  )
+}
+
 async function invokeTauriCommand(command, args = {}) {
   const invoke = getTauriInvoke()
   if (!invoke) {
@@ -115,6 +123,13 @@ async function waitForTauriInvoke(timeoutMs = 4000) {
   return null
 }
 
+function clearDockStateEventSubscription() {
+  if (typeof dockStateEventUnlisten === 'function') {
+    dockStateEventUnlisten()
+  }
+  dockStateEventUnlisten = null
+}
+
 function clearDockCollapseTimer() {
   if (dockCollapseTimer !== null) {
     window.clearTimeout(dockCollapseTimer)
@@ -127,6 +142,15 @@ function clearDockStatePollTimer() {
     window.clearInterval(dockStatePollTimer)
     dockStatePollTimer = null
   }
+}
+
+function applyWindowDockState(dockState) {
+  state.windowDock = {
+    enabled: Boolean(dockState?.enabled),
+    state: dockState?.state || 'normal',
+    side: dockState?.side || null,
+  }
+  syncDockSurface()
 }
 
 function syncDockSurface() {
@@ -260,9 +284,6 @@ function getRuntimeTone(snapshot) {
 
 function syncRuntimePanel() {
   const snapshot = state.runtime
-  runtimeStatus.textContent = getRuntimeLabel(snapshot)
-  runtimeStatus.dataset.state = getRuntimeTone(snapshot)
-  runtimeCheckAge.textContent = formatRelativeTime(snapshot?.last_auth_check_at_ms ?? null)
   runtimeCollectAge.textContent = formatRelativeTime(snapshot?.last_collect_finished_at_ms ?? null)
   syncDownloadStatus()
 
@@ -277,6 +298,9 @@ function syncDownloadStatus() {
   }
 
   const progress = state.downloadProgress
+
+  downloadStatus.dataset.clickable = 'false'
+  downloadStatus.disabled = true
 
   if (progress.phase === 'running') {
     downloadStatus.dataset.state = 'warning'
@@ -293,11 +317,14 @@ function syncDownloadStatus() {
   if (progress.phase === 'fail') {
     downloadStatus.dataset.state = 'danger'
     downloadStatus.textContent = `Fail: ${progress.successCount} Success, ${progress.failureCount} Fail`
+    downloadStatus.dataset.clickable = 'true'
+    downloadStatus.disabled = false
     return
   }
 
-  downloadStatus.dataset.state = 'neutral'
-  downloadStatus.textContent = 'Waiting...'
+  const runtimeLabel = getRuntimeLabel(state.runtime)
+  downloadStatus.dataset.state = getRuntimeTone(state.runtime)
+  downloadStatus.textContent = runtimeLabel === 'UNKNOWN' ? 'WAITING' : runtimeLabel
 }
 
 function clearDownloadStatusResetTimer() {
@@ -324,6 +351,31 @@ function setDownloadProgress(nextProgress) {
       downloadStatusResetTimer = null
       syncDownloadStatus()
     }, 20000)
+  }
+}
+
+async function subscribeDockStateEvents() {
+  clearDockStateEventSubscription()
+  const listen = getTauriEventListen()
+  if (!listen) {
+    return false
+  }
+
+  try {
+    const unlisten = await listen('dock-state-changed', (event) => {
+      if (!event?.payload) {
+        return
+      }
+
+      applyWindowDockState(event.payload)
+    })
+
+    dockStateEventUnlisten = typeof unlisten === 'function' ? unlisten : null
+    return true
+  } catch (error) {
+    console.warn('Failed to subscribe dock-state-changed event', error)
+    dockStateEventUnlisten = null
+    return false
   }
 }
 
@@ -887,12 +939,7 @@ async function getWindowDockState() {
 
 async function refreshWindowDockState() {
   const dockState = await getWindowDockState()
-  state.windowDock = {
-    enabled: Boolean(dockState.enabled),
-    state: dockState.state || 'normal',
-    side: dockState.side || null,
-  }
-  syncDockSurface()
+  applyWindowDockState(dockState)
 }
 
 async function expandDockedWindow() {
@@ -1876,6 +1923,26 @@ function bindRuntimeButtons() {
   })
 }
 
+function bindStatusSurface() {
+  if (!downloadStatus) {
+    return
+  }
+
+  downloadStatus.addEventListener('click', () => {
+    if (state.downloadProgress.phase !== 'fail') {
+      return
+    }
+
+    setDownloadProgress({
+      phase: 'idle',
+      completedCount: 0,
+      totalCount: 0,
+      successCount: 0,
+      failureCount: 0,
+    })
+  })
+}
+
 function bindWindowControls() {
   document.querySelectorAll('.window-button').forEach((button) => {
     button.addEventListener('click', async () => {
@@ -1955,6 +2022,7 @@ async function initializeRuntime() {
 async function initialize() {
   bindWindowControls()
   bindRuntimeButtons()
+  bindStatusSurface()
   bindModalControls()
   bindTitleOverflowRefresh()
   bindDockInteractions()
@@ -1975,6 +2043,7 @@ async function initialize() {
   }
 
   await Promise.all([loadSettings(), initializeRuntime()])
+  const hasDockEvents = await subscribeDockStateEvents()
   await refreshWindowDockState()
   await Promise.all([refreshRuntimeStatus(), loadDashboardData()])
 
@@ -1989,7 +2058,7 @@ async function initialize() {
   clearDockStatePollTimer()
   dockStatePollTimer = window.setInterval(() => {
     refreshWindowDockState()
-  }, 120)
+  }, hasDockEvents ? 5000 : 1500)
 }
 
 initialize()

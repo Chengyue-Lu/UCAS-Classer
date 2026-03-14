@@ -7,7 +7,7 @@ use serde::Serialize;
 use tauri::{
     menu::MenuBuilder,
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Manager, PhysicalPosition, PhysicalRect, PhysicalSize, Position, RunEvent, Size,
+    AppHandle, Emitter, Manager, PhysicalPosition, PhysicalRect, PhysicalSize, Position, RunEvent, Size,
     State, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent,
 };
 use tauri_plugin_dialog::DialogExt;
@@ -46,8 +46,9 @@ const DOCK_STRIP_HEIGHT: u32 = 188;
 const DOCK_EDGE_THRESHOLD: i32 = 28;
 const DOCK_CHECK_DELAY_MS: u64 = 520;
 const MOVE_SUPPRESSION_MS: u64 = 420;
-const WINDOW_ANIMATION_STEPS: i32 = 6;
-const WINDOW_ANIMATION_STEP_MS: u64 = 18;
+const WINDOW_ANIMATION_STEPS: i32 = 10;
+const WINDOW_ANIMATION_STEP_MS: u64 = 16;
+const DOCK_STATE_EVENT: &str = "dock-state-changed";
 
 struct ExitGuard(AtomicBool);
 
@@ -113,12 +114,27 @@ impl Default for DockRuntimeState {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct WindowDockSnapshot {
     enabled: bool,
     state: String,
     side: Option<String>,
+}
+
+fn build_window_dock_snapshot(app: &AppHandle) -> WindowDockSnapshot {
+    let settings = load_settings_fallback();
+    let (state, side) = current_dock_visual_state(app);
+    WindowDockSnapshot {
+        enabled: settings.enable_auto_dock_collapse,
+        state: state.as_str().to_string(),
+        side: side.map(|value| value.as_str().to_string()),
+    }
+}
+
+fn emit_dock_state(app: &AppHandle) -> Result<(), String> {
+    app.emit(DOCK_STATE_EVENT, build_window_dock_snapshot(app))
+        .map_err(|error| format!("failed to emit dock state: {error}"))
 }
 
 fn now_ms() -> u64 {
@@ -276,12 +292,16 @@ fn expanded_position(
 
 fn persist_normal_geometry(window: &WebviewWindow, settings: &mut AppSettings) -> Result<(), String> {
     let position = window.outer_position().map_err(|error| error.to_string())?;
-    let size = window.outer_size().map_err(|error| error.to_string())?;
+    let size = window.inner_size().map_err(|error| error.to_string())?;
     settings.dock_last_x = Some(position.x);
     settings.dock_last_y = Some(position.y);
     settings.dock_expanded_width = Some(size.width.max(DEFAULT_WINDOW_WIDTH));
     settings.dock_expanded_height = Some(size.height.max(DEFAULT_WINDOW_HEIGHT));
     Ok(())
+}
+
+fn is_dock_strip_size(size: PhysicalSize<u32>) -> bool {
+    size.width == DOCK_STRIP_WIDTH && size.height == DOCK_STRIP_HEIGHT
 }
 
 fn set_window_rect(
@@ -296,32 +316,34 @@ fn set_window_rect(
         .set_min_size(None::<Size>)
         .map_err(|error| error.to_string())?;
     let start_position = window.outer_position().map_err(|error| error.to_string())?;
-    let start_size = window.outer_size().map_err(|error| error.to_string())?;
+    let start_size = window.inner_size().map_err(|error| error.to_string())?;
 
-    for step in 1..=WINDOW_ANIMATION_STEPS {
-        let progress = step as f32 / WINDOW_ANIMATION_STEPS as f32;
-        let eased = 1.0 - (1.0 - progress) * (1.0 - progress);
-        let next_width = start_size.width as f32 + (size.width as f32 - start_size.width as f32) * eased;
-        let next_height =
-            start_size.height as f32 + (size.height as f32 - start_size.height as f32) * eased;
-        let next_x = start_position.x as f32 + (position.x as f32 - start_position.x as f32) * eased;
-        let next_y = start_position.y as f32 + (position.y as f32 - start_position.y as f32) * eased;
+    if !is_dock_strip_size(start_size) && !is_dock_strip_size(size) {
+        for step in 1..=WINDOW_ANIMATION_STEPS {
+            let progress = step as f32 / WINDOW_ANIMATION_STEPS as f32;
+            let eased = 1.0 - (1.0 - progress).powi(3);
+            let next_width = start_size.width as f32 + (size.width as f32 - start_size.width as f32) * eased;
+            let next_height =
+                start_size.height as f32 + (size.height as f32 - start_size.height as f32) * eased;
+            let next_x = start_position.x as f32 + (position.x as f32 - start_position.x as f32) * eased;
+            let next_y = start_position.y as f32 + (position.y as f32 - start_position.y as f32) * eased;
 
-        window
-            .set_size(Size::Physical(PhysicalSize::new(
-                next_width.round().max(1.0) as u32,
-                next_height.round().max(1.0) as u32,
-            )))
-            .map_err(|error| error.to_string())?;
-        window
-            .set_position(Position::Physical(PhysicalPosition::new(
-                next_x.round() as i32,
-                next_y.round() as i32,
-            )))
-            .map_err(|error| error.to_string())?;
+            window
+                .set_size(Size::Physical(PhysicalSize::new(
+                    next_width.round().max(1.0) as u32,
+                    next_height.round().max(1.0) as u32,
+                )))
+                .map_err(|error| error.to_string())?;
+            window
+                .set_position(Position::Physical(PhysicalPosition::new(
+                    next_x.round() as i32,
+                    next_y.round() as i32,
+                )))
+                .map_err(|error| error.to_string())?;
 
-        if step < WINDOW_ANIMATION_STEPS {
-            std::thread::sleep(Duration::from_millis(WINDOW_ANIMATION_STEP_MS));
+            if step < WINDOW_ANIMATION_STEPS {
+                std::thread::sleep(Duration::from_millis(WINDOW_ANIMATION_STEP_MS));
+            }
         }
     }
 
@@ -357,6 +379,7 @@ fn enter_dock_mode(window: &WebviewWindow, side: DockSide) -> Result<(), String>
         state.state = DockVisualState::Collapsed;
         state.side = Some(side);
     })?;
+    emit_dock_state(&app)?;
     Ok(())
 }
 
@@ -383,6 +406,7 @@ fn expand_dock_mode(window: &WebviewWindow) -> Result<(), String> {
         state.state = DockVisualState::Expanded;
         state.side = Some(side);
     })?;
+    emit_dock_state(&app)?;
     Ok(())
 }
 
@@ -417,6 +441,7 @@ fn undock_in_place(window: &WebviewWindow) -> Result<(), String> {
         state.state = DockVisualState::Normal;
         state.side = None;
     })?;
+    emit_dock_state(&app)?;
     Ok(())
 }
 
@@ -431,6 +456,7 @@ fn exit_dock_mode_impl(window: &WebviewWindow) -> Result<(), String> {
         with_dock_state(&app, |state| {
             state.side = None;
         })?;
+        emit_dock_state(&app)?;
         return Ok(());
     }
 
@@ -468,6 +494,7 @@ fn exit_dock_mode_impl(window: &WebviewWindow) -> Result<(), String> {
         state.state = DockVisualState::Normal;
         state.side = None;
     })?;
+    emit_dock_state(&app)?;
     Ok(())
 }
 
@@ -496,6 +523,7 @@ fn persist_geometry_after_idle(window: &WebviewWindow) -> Result<(), String> {
                 with_dock_state(&app, |state| {
                     state.side = Some(side);
                 })?;
+                emit_dock_state(&app)?;
             } else {
                 undock_in_place(window)?;
             }
@@ -559,17 +587,31 @@ fn create_main_window(app: &AppHandle) -> Result<(), String> {
         state.side = DockSide::from_option(settings.dock_side.as_deref());
     })?;
 
+    emit_dock_state(app)?;
+    window.set_focus().map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+fn reveal_window(window: &WebviewWindow) -> Result<(), String> {
+    window.show().map_err(|error| error.to_string())?;
+    if window.is_minimized().map_err(|error| error.to_string())? {
+        let _ = window.unminimize();
+    }
     window.set_focus().map_err(|error| error.to_string())?;
     Ok(())
 }
 
 fn show_main_window(app: &AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("main") {
-        let _ = exit_dock_mode_impl(&window);
-        window.show().map_err(|error| error.to_string())?;
-        if window.is_minimized().map_err(|error| error.to_string())? {
-            let _ = window.unminimize();
+        reveal_window(&window)?;
+
+        let (visual_state, _) = current_dock_visual_state(app);
+        if visual_state == DockVisualState::Collapsed {
+            expand_dock_mode(&window)?;
+        } else {
+            emit_dock_state(app)?;
         }
+
         window.set_focus().map_err(|error| error.to_string())?;
         return Ok(());
     }
@@ -765,13 +807,7 @@ fn window_close(window: WebviewWindow) -> Result<(), String> {
 
 #[tauri::command]
 fn get_window_dock_state(app: AppHandle) -> Result<WindowDockSnapshot, String> {
-    let settings = load_settings_fallback();
-    let (state, side) = current_dock_visual_state(&app);
-    Ok(WindowDockSnapshot {
-        enabled: settings.enable_auto_dock_collapse,
-        state: state.as_str().to_string(),
-        side: side.map(|value| value.as_str().to_string()),
-    })
+    Ok(build_window_dock_snapshot(&app))
 }
 
 #[tauri::command]

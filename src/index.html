@@ -63,90 +63,62 @@
         <main class="main-panel">
           <section class="status-card" aria-live="polite">
             <div class="status-card__topline">
-              <div>
+              <div class="status-card__heading">
                 <p class="status-card__eyebrow">Runtime Surface</p>
                 <p class="status-card__headline">运行状态</p>
               </div>
-              <span class="status-badge" id="runtime-status">UNKNOWN</span>
+              <button
+                class="download-status"
+                id="download-status"
+                type="button"
+                aria-label="运行与下载状态"
+                disabled
+              >
+                WAITING
+              </button>
             </div>
 
-            <div class="status-metrics">
-              <article class="status-metric">
-                <p class="status-metric__label">上次 Check</p>
-                <p
-                  class="status-metric__value"
-                  id="runtime-check-age"
-                >
-                  从未
-                </p>
-              </article>
-              <article class="status-metric">
+            <div class="status-card__bottomline">
+              <article class="status-metric status-metric--compact">
                 <p class="status-metric__label">上次 Collect</p>
-                <p
-                  class="status-metric__value"
-                  id="runtime-collect-age"
-                >
-                  从未
-                </p>
+                <p class="status-metric__value" id="runtime-collect-age">从未</p>
               </article>
-            </div>
 
-            <nav class="action-nav" aria-label="运行时操作">
-              <div class="action-nav__items" role="toolbar">
-                <button
-                  class="action-button"
-                  type="button"
-                  data-runtime-action="check"
-                  data-active="false"
-                >
-                  <span class="action-button__hover" aria-hidden="true"></span>
-                  <span class="action-button__label-stack">
-                    <span class="action-button__label">Check</span>
-                    <span
-                      class="action-button__label action-button__label--hover"
-                      aria-hidden="true"
-                    >
-                      Check
-                    </span>
-                  </span>
-                </button>
-                <button
-                  class="action-button"
-                  type="button"
-                  data-runtime-action="collect"
-                  data-active="false"
-                >
-                  <span class="action-button__hover" aria-hidden="true"></span>
-                  <span class="action-button__label-stack">
-                    <span class="action-button__label">Collect</span>
-                    <span
-                      class="action-button__label action-button__label--hover"
-                      aria-hidden="true"
-                    >
-                      Collect
-                    </span>
-                  </span>
-                </button>
-                <button
-                  class="action-button"
-                  type="button"
-                  data-runtime-action="login"
-                  data-active="false"
-                >
-                  <span class="action-button__hover" aria-hidden="true"></span>
-                  <span class="action-button__label-stack">
-                    <span class="action-button__label">Login</span>
-                    <span
-                      class="action-button__label action-button__label--hover"
-                      aria-hidden="true"
-                    >
-                      Login
-                    </span>
-                  </span>
-                </button>
-              </div>
-            </nav>
-            <p class="download-status" id="download-status">Waiting...</p>
+              <nav class="action-nav" aria-label="运行时操作">
+                <div class="action-nav__items" role="toolbar">
+                  <button
+                    class="action-button action-button--round"
+                    type="button"
+                    data-runtime-action="check"
+                    data-active="false"
+                    aria-label="Check"
+                    title="Check"
+                  >
+                    <span class="action-button__glyph" aria-hidden="true">C</span>
+                  </button>
+                  <button
+                    class="action-button action-button--round"
+                    type="button"
+                    data-runtime-action="collect"
+                    data-active="false"
+                    aria-label="Collect"
+                    title="Collect"
+                  >
+                    <span class="action-button__glyph" aria-hidden="true">↓</span>
+                  </button>
+                  <button
+                    class="action-button action-button--round"
+                    type="button"
+                    data-runtime-action="login"
+                    data-active="false"
+                    aria-label="Login"
+                    title="Login"
+                  >
+                    <span class="action-button__glyph" aria-hidden="true">L</span>
+                  </button>
+                </div>
+              </nav>
+            </div>
           </section>
 
           <section class="courses-panel">
