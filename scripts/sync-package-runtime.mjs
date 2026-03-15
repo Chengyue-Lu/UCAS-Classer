@@ -33,6 +33,7 @@ const sharedFiles = [
 ]
 
 const sharedDirs = [
+  'src/app',
   'automation/downloads',
   'automation/request-course-list',
   'automation/request-collectors',

@@ -9,6 +9,34 @@
 - 侧收判定当前基于窗口外框与当前显示器 `work_area` 左右边缘的区间命中，不依赖鼠标坐标。
 - 设置弹窗当前已收口为“内容区 -> 反馈 -> 操作按钮”的底部 footer 结构；课程范围与自动侧收为点击即生效项。
 - package 壳层与开发端壳层的窗口行为已重新对齐；共享层继续通过同步脚本下发。
+
+## 0.1 2026-03-14 / 前端状态流审计补充
+
+- 已新增前端专项审计文档：`docs/frontend-state-audit.md`。
+- 当前已确认的前端复杂度热点集中在：
+  - Tauri 调用桥接的多层兜底
+  - dock 状态的事件 / 轮询 / 手动刷新并存
+  - runtime/download 状态框的重复派生
+  - settings modal 内多种保存模式并存
+- 该审计结论属于“下一轮前端重构施工图”，不是功能层 bug 清单。
+
+## 0.2 2026-03-15 / 前端模块拆分补充
+
+- `src/app.js` 已从单文件控制器开始拆成 ES module 结构。
+- 当前新增的前端内部模块包括：
+  - `src/app/bridge.js`
+  - `src/app/course-renderer.js`
+  - `src/app/detail-controller.js`
+  - `src/app/download-controller.js`
+  - `src/app/formatters.js`
+  - `src/app/modal-ui.js`
+  - `src/app/state-models.js`
+  - `src/app/path-utils.js`
+  - `src/app/settings-controller.js`
+  - `src/app/settings-save.js`
+  - `src/app/dock-controller.js`
+- `src/app.js` 当前主要保留页面编排、controller 组装和主流程入口，已不再承担 settings / download / detail / course render 的具体实现。
+- 当前前端已进入“模块职责清晰、下一步按模块删冗余”的阶段，后续重点不再是继续拆文件，而是开始审计 Rust / TS 主线。
 <!-- markdownlint-disable MD013 MD033 -->
 
 ## 1. 基线与范围
@@ -315,7 +343,8 @@ sequenceDiagram
 | 文件 | 职责 | 上游/触发点 | 下游/影响 | 主线地位 | 重复/裁剪结论 |
 | --- | --- | --- | --- | --- | --- |
 | `src/index.html` | 桌面主界面结构 | Tauri `frontendDist` | 绑定 `app.js` 与 `styles.css` | 主线必经 | 保留 |
-| `src/app.js` | 前端状态机与 Tauri command 触发器 | 用户操作、窗口启动 | 调度、设置、详情、下载、打开原页 | 主线必经 | 保留；内部 legacy settings 函数可删 |
+| `src/app.js` | 前端编排入口，连接 DOM、controller 与 Tauri command | 用户操作、窗口启动 | 调度、设置、详情、下载、打开原页 | 主线必经 | 保留；当前已回落为 orchestration 入口 |
+| `src/app/*.js` | 前端内部模块：bridge、course renderer、detail controller、dock、download、formatters、modal ui、path utils、settings controller/save、status model | `src/app.js` | 降低 `app.js` 职责耦合 | 主线支撑 | 新增；前端主线已形成明确模块边界 |
 | `src/styles.css` | 主界面样式 | `index.html` | UI 呈现 | 主线支撑 | 保留 |
 
 ### 7.3 共享路径与协议
@@ -377,6 +406,7 @@ sequenceDiagram
 | `docs/archive-plans/打包准备.md` | 历史打包准备 | 人工阅读 | 历史参考 | 非主线 | 保留为 archive |
 | `docs/archive-plans/改进计划.md` | 历史改进计划 | 人工阅读 | 历史参考 | 非主线 | 保留为 archive |
 | `docs/development-handoff.md` | 当前交接主文档 | 人工阅读 | 当前阶段认知基线 | 支撑 | 保留 |
+| `docs/frontend-state-audit.md` | 前端状态流审计与重构路线 | 人工阅读 | 指导 `src/app.js` 的去冗余和状态收口 | 支撑 | 新增；作为前端重构施工图保留 |
 | `docs/v1.0.1-v1.1.0progress.md` | 当前版本阶段性进度 | 人工阅读 | 版本目标与待办基线 | 支撑 | 保留 |
 
 ### 7.8 Tauri 配置与资源层
@@ -498,9 +528,9 @@ sequenceDiagram
 
 ### 10.2 下一轮先重构边界，再考虑删除
 
-1. 再决定是否压缩 `automation/auth/browser.ts`、`utils.ts` 的 debug 支撑面。
-2. 把 Rust command 暴露面按 UI/debug 分层。
-3. 评估是否把前端串行批量下载重新收口回后端批量桥接，同时保留进度显示。
+1. 先转向 `src-tauri/src/main.rs`，审计 dock / tray / window command 的重复判断与职责混杂。
+2. 再看 `src-tauri/src/downloads.rs` 与 `automation/downloads/*`，确认下载桥是否还能继续压缩。
+3. 再进入 `automation/request-collectors/common.ts` 与 `full-collect.ts`，整理 full / summary 双模式下的重复逻辑。
 
 ### 10.3 下一轮不要直接做的事
 
