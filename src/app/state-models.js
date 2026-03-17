@@ -1,3 +1,4 @@
+// Keeps runtime/download display state derivation pure and centralized.
 function createIdleDownloadProgress() {
   return {
     phase: 'idle',

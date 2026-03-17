@@ -3,9 +3,12 @@ import {
   createAttachmentList,
   createDetailAction,
   createDetailChip,
+  createHtmlBlock,
   createTextBlock,
 } from './modal-ui.js'
 
+// Builds the modal body for notice/material/assignment details and keeps
+// the page entry file free from per-kind branching.
 export function createDetailController({
   state,
   modalOverlay,
@@ -21,11 +24,97 @@ export function createDetailController({
   copyText,
   openExternalUrl,
   openAuthenticatedUrl,
+  loadAssignmentDetail,
 }) {
+  let assignmentLoadToken = 0
+
+  function createMutableDetailSection(title, initialNode) {
+    const section = document.createElement('section')
+    section.className = 'detail-section'
+
+    const heading = document.createElement('h3')
+    heading.className = 'detail-section__title'
+    heading.textContent = title
+
+    const content = document.createElement('div')
+    content.className = 'detail-section__content'
+    if (initialNode) {
+      content.append(initialNode)
+    }
+
+    section.append(heading, content)
+    modalBody.append(section)
+    return { section, content }
+  }
+
+  function renderAssignmentLinks(content, links) {
+    content.replaceChildren()
+    content.append(
+      createAttachmentList(links || [], (link) => {
+        openAuthenticatedUrl(link.url)
+      }),
+    )
+  }
+
+  function createAssignmentDetailRequest(course, item) {
+    return {
+      courseId: course.courseId,
+      assignmentsUrl: course.assignmentsUrl || null,
+      workUrl: item.workUrl,
+      title: item.title || '',
+      status: item.status || null,
+      startTime: item.startTime || null,
+      endTime: item.endTime || null,
+      rawText: item.rawText || '',
+    }
+  }
+
+function startAssignmentDetailLoad(course, item, detailContent, linkContent) {
+    const token = ++assignmentLoadToken
+    detailContent.content.replaceChildren(createTextBlock('正在加载作业详情...'))
+    renderAssignmentLinks(linkContent.content, [])
+
+    void loadAssignmentDetail(createAssignmentDetailRequest(course, item))
+      .then((detail) => {
+        if (token !== assignmentLoadToken || !state.modalOpen || state.modalType !== 'assignments') {
+          return
+        }
+
+        detailContent.content.replaceChildren(
+          detail.detailHtml
+            ? createHtmlBlock(detail.detailHtml, {
+                baseUrl: detail.finalUrl,
+                onOpenLink: openAuthenticatedUrl,
+              })
+            : createTextBlock(detail.detailText || item.rawText || ''),
+        )
+        if (detail.links?.length) {
+          linkContent.section.hidden = false
+          renderAssignmentLinks(linkContent.content, detail.links || [])
+        } else {
+          linkContent.section.hidden = true
+          renderAssignmentLinks(linkContent.content, [])
+        }
+      })
+      .catch((error) => {
+        if (token !== assignmentLoadToken || !state.modalOpen || state.modalType !== 'assignments') {
+          return
+        }
+
+        detailContent.content.replaceChildren(
+          createTextBlock(`加载失败：${error instanceof Error ? error.message : String(error)}`),
+        )
+        linkContent.section.hidden = true
+        renderAssignmentLinks(linkContent.content, [])
+      })
+  }
+
   function openDetailModal(kind, course, item) {
+    assignmentLoadToken += 1
     state.modalType = kind
     resetModal()
 
+    // Keep the branching here so renderers only need to pass kind/course/item.
     if (kind === 'notice') {
       modalKind.textContent = '通知'
       modalTitle.textContent = item.title || '未命名通知'
@@ -116,15 +205,23 @@ export function createDetailController({
       )
 
       if (item.workUrl) {
+        const detailContent = createMutableDetailSection('详情', createTextBlock('正在加载作业详情...'))
+        const linkContent = createMutableDetailSection('页面链接', createTextBlock(''))
+        linkContent.section.hidden = true
+
         modalActions.append(
+          createDetailAction('重新加载详情', () => {
+            startAssignmentDetailLoad(course, item, detailContent, linkContent)
+          }),
           createDetailAction('打开作业入口', () => {
             openAuthenticatedUrl(item.workUrl)
           }),
         )
-      }
 
-      appendDetailSection(modalBody, '详情', createTextBlock(item.rawText || ''))
-      appendDetailSection(modalBody, '说明', createTextBlock('当前仅展示详情，不代替提交。'))
+        startAssignmentDetailLoad(course, item, detailContent, linkContent)
+      } else {
+        appendDetailSection(modalBody, '详情', createTextBlock(item.rawText || ''))
+      }
     }
 
     modalOverlay.hidden = false
@@ -133,6 +230,7 @@ export function createDetailController({
   }
 
   function closeDetailModal() {
+    assignmentLoadToken += 1
     modalOverlay.hidden = true
     appShell.classList.remove('app-shell--modal-open')
     state.modalOpen = false

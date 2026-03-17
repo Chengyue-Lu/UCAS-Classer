@@ -1,3 +1,7 @@
+//! Development-side path contract.
+//! Package builds keep their own shell/path layer, so this module should not
+//! absorb package-specific system path behavior.
+
 use std::path::PathBuf;
 
 pub fn project_root() -> PathBuf {
@@ -14,6 +18,8 @@ pub fn storage_state_file() -> PathBuf {
         return primary;
     }
 
+    // Compatibility fallback for older development layouts before auth data
+    // moved under `data/auth/`.
     let legacy = project_root()
         .join("automation")
         .join("auth")
@@ -37,6 +43,10 @@ pub fn app_settings_file() -> PathBuf {
 
 pub fn runtime_state_file() -> PathBuf {
     data_dir().join("runtime-state.json")
+}
+
+pub fn reminder_state_file() -> PathBuf {
+    data_dir().join("reminder-state.json")
 }
 
 pub fn cache_dir() -> PathBuf {

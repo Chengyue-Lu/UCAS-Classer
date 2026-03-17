@@ -1,3 +1,5 @@
+// Shared save pipeline for all settings entry points so success/failure
+// semantics stay consistent across toggles, footer saves, and subdir edits.
 export function createSettingsSaver({
   state,
   syncSettingsMeta,

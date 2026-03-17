@@ -22,6 +22,27 @@ npm run collect:all -- --concurrency 4
    - 作业列表
 4. 输出仍然写回原来的 `data/cache/*.json`，以便直接复用现有 Rust 导库逻辑。
 
+## 当前内部结构
+
+- `request-core.ts`
+  - request context
+  - HTML fetch
+  - 文本归一化
+  - 课程模块入口解析
+- `material-parser.ts`
+  - 资料树递归
+  - folder URL 修复
+- `notice-parser.ts`
+  - 通知列表
+  - 通知详情与附件
+- `assignment-parser.ts`
+  - 作业列表
+  - 待做作业链接补全
+- `common.ts`
+  - 兼容出口，供旧调用面继续导入
+- `full-collect.ts`
+  - 全量 / summary 编排
+
 ## 已验证结果
 
 - 新路线输出的 cache 文件名和结构与旧浏览器路线兼容。

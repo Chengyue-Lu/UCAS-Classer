@@ -25,11 +25,13 @@ const sharedFiles = [
   'automation/auth/reset.ts',
   'automation/auth/utils.ts',
   'src-tauri/src/app_data.rs',
+  'src-tauri/src/assignment_details.rs',
   'src-tauri/src/app_settings.rs',
   'src-tauri/src/auth_runtime.rs',
   'src-tauri/src/db_import.rs',
   'src-tauri/src/downloads.rs',
   'src-tauri/src/lib.rs',
+  'src-tauri/src/reminders.rs',
 ]
 
 const sharedDirs = [

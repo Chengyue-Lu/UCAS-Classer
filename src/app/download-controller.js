@@ -1,3 +1,5 @@
+// Encapsulates path derivation, single-file download, and the current
+// front-end-driven batch download flow.
 export function createDownloadController({
   state,
   setModalFeedback,
@@ -108,6 +110,8 @@ export function createDownloadController({
     let successCount = 0
 
     try {
+      // We stay serial here on purpose: it keeps the desktop UI responsive
+      // and makes per-item progress easy to surface.
       for (let index = 0; index < requests.length; index += 1) {
         const request = requests[index]
 

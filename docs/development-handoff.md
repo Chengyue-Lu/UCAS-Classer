@@ -114,3 +114,29 @@
 - 通知 / 作业详情内部展示继续完善
 - 通知 / 作业附件是否要批量下载可以单独评估
 - 继续验证托盘与调度在打包端的长期稳定性
+## 2026-03-16 / v1.1.0 交接补充
+
+当前主线又新增了 4 个接近收口版本的能力：
+
+- 课程分目录弹窗支持按 `全部 / 当前学期 / 以往学期` 过滤显示，过滤依据直接复用 dashboard 里的 `termCategory`。
+- Dock 模式已经把“仅 dock 时置顶”做成一致语义：收起和边缘展开都置顶，拖出边缘或退出 dock 才取消。
+- 作业详情不再只展示列表摘要；现在是点开作业后按需抓取详情，并将结果缓存到 SQLite 的 `assignment_detail_cache`。
+- 系统提醒已接入桌面端：full import 成功后按课程聚合提醒新通知 / 新资料 / 新作业，提醒基线保存在 `reminder-state.json`。
+
+当前几个关键落点：
+
+- 前端：
+  - `src/app/settings-controller.js` 负责课程分目录过滤 UI
+  - `src/app/detail-controller.js` 负责作业详情加载态、缓存命令调用和重试
+- Rust：
+  - `src-tauri/src/desktop_shell.rs` 负责 dock 置顶
+  - `src-tauri/src/assignment_details.rs` 负责作业详情缓存
+  - `src-tauri/src/reminders.rs` 负责提醒状态与系统通知
+- TS：
+  - `automation/request-collectors/assignment-detail.ts` 负责 request 抓取作业详情页
+
+这意味着当前 `1.1.0` 剩余工作更偏向：
+
+- 自动侧收手感与视觉打磨
+- 详情展示细节继续精修
+- 打包前的双端回归与通知实际体验验证

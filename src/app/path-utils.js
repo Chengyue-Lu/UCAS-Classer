@@ -1,3 +1,5 @@
+// Normalizes relative subdir rules once so UI code does not re-implement
+// path safety checks in multiple places.
 function normalizeRelativeSubdir(relativeDir) {
   if (!relativeDir) {
     return ''

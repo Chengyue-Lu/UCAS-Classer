@@ -1,3 +1,6 @@
+//! Persistent application settings shared by the front-end and runtime service.
+//! This module also stores lightweight runtime markers that should survive restarts.
+
 use std::fs;
 use std::path::{Component, Path};
 
@@ -66,8 +69,12 @@ pub fn load_app_settings() -> Result<AppSettings, String> {
         )
     })?;
 
-    let mut settings = serde_json::from_str::<AppSettings>(&contents)
-        .map_err(|error| format!("failed to parse app settings `{}`: {error}", settings_path.display()))?;
+    let mut settings = serde_json::from_str::<AppSettings>(&contents).map_err(|error| {
+        format!(
+            "failed to parse app settings `{}`: {error}",
+            settings_path.display()
+        )
+    })?;
     normalize_settings(&mut settings);
     Ok(settings)
 }
@@ -104,6 +111,8 @@ fn normalize_settings(settings: &mut AppSettings) {
         _ => "all".to_string(),
     };
 
+    // Store course download overrides as relative paths only so the global
+    // download dir can still move independently.
     settings.course_download_subdirs = settings
         .course_download_subdirs
         .iter()
@@ -118,10 +127,14 @@ fn normalize_settings(settings: &mut AppSettings) {
         })
         .collect();
 
-    settings.auth_check_interval_secs =
-        normalize_interval_secs(settings.auth_check_interval_secs, DEFAULT_AUTH_CHECK_INTERVAL_SECS);
-    settings.collect_interval_secs =
-        normalize_interval_secs(settings.collect_interval_secs, DEFAULT_COLLECT_INTERVAL_SECS);
+    settings.auth_check_interval_secs = normalize_interval_secs(
+        settings.auth_check_interval_secs,
+        DEFAULT_AUTH_CHECK_INTERVAL_SECS,
+    );
+    settings.collect_interval_secs = normalize_interval_secs(
+        settings.collect_interval_secs,
+        DEFAULT_COLLECT_INTERVAL_SECS,
+    );
     settings.cookie_refresh_interval_secs = normalize_interval_secs(
         settings.cookie_refresh_interval_secs,
         DEFAULT_COOKIE_REFRESH_INTERVAL_SECS,
@@ -183,8 +196,12 @@ fn normalize_relative_subdir(value: &str) -> String {
 }
 
 fn write_app_settings(settings: &AppSettings) -> Result<(), String> {
-    fs::create_dir_all(data_dir())
-        .map_err(|error| format!("failed to create data dir `{}`: {error}", data_dir().display()))?;
+    fs::create_dir_all(data_dir()).map_err(|error| {
+        format!(
+            "failed to create data dir `{}`: {error}",
+            data_dir().display()
+        )
+    })?;
 
     let contents = serde_json::to_string_pretty(settings)
         .map_err(|error| format!("failed to serialize app settings: {error}"))?;

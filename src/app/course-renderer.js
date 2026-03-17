@@ -1,5 +1,6 @@
 import { formatCount } from './formatters.js'
 
+// Owns course-card rendering and the small paging/overflow behaviors inside it.
 function createInlineStat(label, count) {
   const stat = document.createElement('span')
   stat.className = 'course-card__inline-stat'
@@ -121,6 +122,8 @@ export function createCourseRenderer({
       const pageSize = 5
       const totalPages = Math.max(1, Math.ceil(displayItems.length / pageSize))
 
+      // Module lists stay local to the card so we can paginate without
+      // forcing a full course-list rerender.
       const renderPage = () => {
         list.replaceChildren()
 
@@ -194,6 +197,8 @@ export function createCourseRenderer({
       return
     }
 
+    // The clone segment is only useful when the visible width is actually
+    // smaller than the rendered title width.
     const shouldScroll = primaryTitle.scrollWidth > marquee.clientWidth + 6
     marquee.classList.toggle('is-overflowing', shouldScroll)
 

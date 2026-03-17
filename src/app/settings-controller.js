@@ -1,3 +1,5 @@
+// Owns settings-related modal composition, including global settings and
+// per-course subdir management.
 export function createSettingsController({
   state,
   modalOverlay,
@@ -25,6 +27,24 @@ export function createSettingsController({
   toRelativeSubdir,
   getErrorMessage,
 }) {
+  const COURSE_SCOPE_OPTIONS = [
+    { value: 'all', label: '全部' },
+    { value: 'current', label: '当前学期' },
+    { value: 'past', label: '以往学期' },
+  ]
+
+  function filterCoursesByScope(courses, scope) {
+    if (scope === 'current') {
+      return courses.filter((course) => course.termCategory === 'current')
+    }
+
+    if (scope === 'past') {
+      return courses.filter((course) => course.termCategory === 'past')
+    }
+
+    return courses
+  }
+
   function createSettingsField(label, value, options = {}) {
     const field = document.createElement('label')
     field.className = 'settings-field'
@@ -92,6 +112,29 @@ export function createSettingsController({
     return { field, toggle }
   }
 
+  function createScopeToggle(currentValue, onSelect) {
+    const scopeToggle = document.createElement('div')
+    scopeToggle.className = 'settings-scope-toggle'
+
+    COURSE_SCOPE_OPTIONS.forEach((option) => {
+      const button = document.createElement('button')
+      button.className = 'settings-scope-toggle__button'
+      button.type = 'button'
+      button.dataset.active = String(currentValue() === option.value)
+      button.textContent = option.label
+      button.addEventListener('click', () => {
+        if (currentValue() === option.value) {
+          return
+        }
+
+        onSelect(option.value)
+      })
+      scopeToggle.append(button)
+    })
+
+    return scopeToggle
+  }
+
   async function openCourseSubdirModal(feedbackMessage = '') {
     state.modalType = 'course-subdirs'
     resetModal()
@@ -112,6 +155,16 @@ export function createSettingsController({
     const draftSubdirs = {
       ...(state.settings.courseDownloadSubdirs || {}),
     }
+    let selectedScope = state.settings.courseScope || 'all'
+
+    const scopeField = document.createElement('div')
+    scopeField.className = 'settings-field settings-field--scope'
+    scopeField.append(
+      Object.assign(document.createElement('span'), {
+        className: 'settings-field__label',
+        textContent: '显示范围',
+      }),
+    )
 
     const list = document.createElement('div')
     list.className = 'course-subdir-list'
@@ -129,14 +182,39 @@ export function createSettingsController({
     }
 
     const renderRows = () => {
+      scopeField
+        .querySelector('.settings-scope-toggle')
+        ?.replaceWith(
+          createScopeToggle(
+            () => selectedScope,
+            (nextScope) => {
+              selectedScope = nextScope
+              renderRows()
+            },
+          ),
+        )
+
+      if (!scopeField.querySelector('.settings-scope-toggle')) {
+        scopeField.append(
+          createScopeToggle(
+            () => selectedScope,
+            (nextScope) => {
+              selectedScope = nextScope
+              renderRows()
+            },
+          ),
+        )
+      }
+
       list.replaceChildren()
 
-      if (!courses.length) {
-        list.append(createTextBlock('当前没有已加载课程，无法配置课程分目录。'))
+      const visibleCourses = filterCoursesByScope(courses, selectedScope)
+      if (!visibleCourses.length) {
+        list.append(createTextBlock('当前没有符合筛选条件的课程。'))
         return
       }
 
-      courses.forEach((course) => {
+      visibleCourses.forEach((course) => {
         const currentValue = normalizeRelativeSubdir(draftSubdirs[course.courseId] || '')
         const row = document.createElement('section')
         row.className = 'course-subdir-row'
@@ -201,7 +279,7 @@ export function createSettingsController({
     }
 
     renderRows()
-    modalBody.append(list)
+    modalBody.append(scopeField, list)
 
     modalActions.append(
       createDetailAction('返回全局设置', () => {
@@ -240,7 +318,7 @@ export function createSettingsController({
       intervalSecsToMinutes(state.settings.authCheckIntervalSecs, 180),
       {
         fieldName: 'authCheckIntervalSecs',
-        placeholder: '默认 3',
+        placeholder: '默认 180',
         type: 'number',
         min: '1',
         compact: true,
@@ -251,7 +329,7 @@ export function createSettingsController({
       intervalSecsToMinutes(state.settings.collectIntervalSecs, 15),
       {
         fieldName: 'collectIntervalSecs',
-        placeholder: '默认 60',
+        placeholder: '默认 15',
         type: 'number',
         min: '1',
         compact: true,
@@ -262,7 +340,7 @@ export function createSettingsController({
       intervalSecsToMinutes(state.settings.cookieRefreshIntervalSecs, 720),
       {
         fieldName: 'cookieRefreshIntervalSecs',
-        placeholder: '默认 60',
+        placeholder: '默认 720',
         type: 'number',
         min: '1',
         compact: true,
@@ -277,8 +355,9 @@ export function createSettingsController({
         ? 'ON'
         : 'OFF'
     }
+
     const dockToggleField = createSettingsToggleField(
-      '自动窗口收起',
+      '自动窗口侧收',
       '窗口拖到左右边缘后自动收起，移入边缘栏再展开。',
       dockEnabled,
       async () => {
@@ -355,39 +434,25 @@ export function createSettingsController({
       }),
     )
 
-    const scopeToggle = document.createElement('div')
-    scopeToggle.className = 'settings-scope-toggle'
-    const scopeOptions = [
-      { value: 'all', label: '全部' },
-      { value: 'current', label: '当前学期' },
-      { value: 'past', label: '以往学期' },
-    ]
     let selectedScope = state.settings.courseScope || 'all'
     let scopeSaving = false
-
     const renderScopeButtons = () => {
-      scopeToggle.replaceChildren()
-      scopeOptions.forEach((option) => {
-        const button = document.createElement('button')
-        button.className = 'settings-scope-toggle__button'
-        button.type = 'button'
-        button.dataset.active = String(selectedScope === option.value)
-        button.textContent = option.label
-        button.disabled = scopeSaving
-        button.addEventListener('click', async () => {
-          if (scopeSaving || selectedScope === option.value) {
+      const scopeToggle = createScopeToggle(
+        () => selectedScope,
+        async (nextScope) => {
+          if (scopeSaving || selectedScope === nextScope) {
             return
           }
 
           const previousScope = state.settings.courseScope || 'all'
-          selectedScope = option.value
+          selectedScope = nextScope
           scopeSaving = true
           renderScopeButtons()
 
           try {
             const saved = await saveSettingsPatch(
               {
-                courseScope: option.value,
+                courseScope: nextScope,
               },
               {
                 successMessage: '课程范围已更新。',
@@ -395,7 +460,7 @@ export function createSettingsController({
                 renderCoursesAfterSave: true,
               },
             )
-            selectedScope = saved.courseScope || option.value
+            selectedScope = saved.courseScope || nextScope
           } catch (error) {
             selectedScope = previousScope
             setModalFeedback(getErrorMessage(error), 'error')
@@ -403,13 +468,20 @@ export function createSettingsController({
             scopeSaving = false
             renderScopeButtons()
           }
-        })
-        scopeToggle.append(button)
+        },
+      )
+
+      scopeToggle.querySelectorAll('.settings-scope-toggle__button').forEach((button) => {
+        button.disabled = scopeSaving
       })
+
+      scopeField.querySelector('.settings-scope-toggle')?.replaceWith(scopeToggle)
+      if (!scopeField.querySelector('.settings-scope-toggle')) {
+        scopeField.append(scopeToggle)
+      }
     }
 
     renderScopeButtons()
-    scopeField.append(scopeToggle)
 
     const intervalRow = document.createElement('div')
     intervalRow.className = 'settings-inline-row'
@@ -438,9 +510,15 @@ export function createSettingsController({
                 downloadDir: downloadField.control.value.trim(),
                 enableAutoDockCollapse: dockEnabled,
                 courseScope: state.settings.courseScope || selectedScope,
-                authCheckIntervalSecs: intervalMinutesToSecs(authCheckField.control.value, 180 * 60),
+                authCheckIntervalSecs: intervalMinutesToSecs(
+                  authCheckField.control.value,
+                  180 * 60,
+                ),
                 collectIntervalSecs: intervalMinutesToSecs(collectField.control.value, 15 * 60),
-                cookieRefreshIntervalSecs: intervalMinutesToSecs(cookieRefreshField.control.value, 720 * 60),
+                cookieRefreshIntervalSecs: intervalMinutesToSecs(
+                  cookieRefreshField.control.value,
+                  720 * 60,
+                ),
               },
               {
                 successMessage: '设置已保存。',

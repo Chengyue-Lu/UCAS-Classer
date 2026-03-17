@@ -1,3 +1,7 @@
+//! Thin bridge from Rust into the Node-based automation scripts.
+//! It stays intentionally small so auth, collect, and download flows share
+//! one execution model.
+
 use std::path::PathBuf;
 use std::process::{Child, Command, Output, Stdio};
 
@@ -31,10 +35,14 @@ fn npm_command() -> &'static str {
     }
 }
 
-fn base_command(script: &str, extra_args: &[&str]) -> Command {
+fn base_command(script: &str, extra_args: &[&str], silent: bool) -> Command {
     let mut command = Command::new(npm_command());
     command.current_dir(project_root());
-    command.arg("run").arg(script);
+    command.arg("run");
+    if silent {
+        command.arg("--silent");
+    }
+    command.arg(script);
 
     if !extra_args.is_empty() {
         command.arg("--");
@@ -65,7 +73,7 @@ fn decode_output(bytes: Vec<u8>) -> String {
 }
 
 pub fn run_hidden_script(script: &str, extra_args: &[&str]) -> Result<ScriptOutput, String> {
-    let mut command = base_command(script, extra_args);
+    let mut command = base_command(script, extra_args, true);
     command.stdin(Stdio::null());
     apply_window_mode(&mut command, ScriptWindow::Hidden);
 
@@ -76,16 +84,18 @@ pub fn run_hidden_script(script: &str, extra_args: &[&str]) -> Result<ScriptOutp
     Ok(build_script_output(output))
 }
 
-pub fn run_visible_login_script(script: &str, extra_args: &[&str]) -> Result<ScriptOutput, String> {
-    let child = spawn_visible_login_script(script, extra_args)?;
-    wait_for_script_child(child, script)
-}
-
 pub fn spawn_visible_login_script(script: &str, extra_args: &[&str]) -> Result<Child, String> {
+    // Login keeps a visible browser flow, but the process wrapper itself still
+    // runs without attaching a noisy console window.
     let mut command = if cfg!(windows) {
         let mut command = Command::new("cmd.exe");
         command.current_dir(project_root());
-        command.arg("/C").arg(npm_command()).arg("run").arg(script);
+        command
+            .arg("/C")
+            .arg(npm_command())
+            .arg("run")
+            .arg("--silent")
+            .arg(script);
         if !extra_args.is_empty() {
             command.arg("--");
             for arg in extra_args {
@@ -94,7 +104,7 @@ pub fn spawn_visible_login_script(script: &str, extra_args: &[&str]) -> Result<C
         }
         command
     } else {
-        base_command(script, extra_args)
+        base_command(script, extra_args, true)
     };
 
     command.stdin(Stdio::null());
@@ -108,7 +118,7 @@ pub fn spawn_visible_login_script(script: &str, extra_args: &[&str]) -> Result<C
 }
 
 pub fn spawn_hidden_background_script(script: &str, extra_args: &[&str]) -> Result<Child, String> {
-    let mut command = base_command(script, extra_args);
+    let mut command = base_command(script, extra_args, true);
     command.stdin(Stdio::null());
     command.stdout(Stdio::null());
     command.stderr(Stdio::null());

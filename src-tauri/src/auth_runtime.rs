@@ -1,3 +1,7 @@
+//! Runtime scheduler and recovery service.
+//! This is the core orchestration layer for auth check, login recovery,
+//! collect scheduling, and database import follow-up.
+
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, Mutex,
@@ -187,7 +191,10 @@ impl RuntimeService {
     }
 
     pub fn snapshot(&self) -> RuntimeSnapshot {
-        self.snapshot.lock().expect("snapshot lock poisoned").clone()
+        self.snapshot
+            .lock()
+            .expect("snapshot lock poisoned")
+            .clone()
     }
 
     fn update<F>(&self, updater: F) -> RuntimeSnapshot
@@ -197,6 +204,8 @@ impl RuntimeService {
         let mut snapshot = self.snapshot.lock().expect("snapshot lock poisoned");
         updater(&mut snapshot);
         let cloned = snapshot.clone();
+        // Persist the lightweight timing markers so a restart does not make
+        // the runtime appear as if it never checked or collected.
         let _ = persist_runtime_markers(
             cloned.last_auth_check_at_ms,
             cloned.last_collect_finished_at_ms,
@@ -421,6 +430,8 @@ impl RuntimeService {
             return CollectMode::Full;
         }
 
+        // The persisted flag lets a summary-mode diff survive app restart and
+        // still force the next scheduled collect back to full mode.
         let settings = load_app_settings().unwrap_or_default();
         if settings.pending_full_collect_after_diff {
             CollectMode::Full
@@ -505,9 +516,7 @@ impl RuntimeService {
             return;
         }
 
-        let _ = self
-            .run_auth_check(CheckSource::Scheduled, true)
-            .await;
+        let _ = self.run_auth_check(CheckSource::Scheduled, true).await;
     }
 
     async fn handle_hourly_tick(self: &Arc<Self>) {
@@ -554,7 +563,10 @@ impl RuntimeService {
         run_initial_check: bool,
         run_initial_collect: bool,
     ) -> RuntimeSnapshot {
-        let mut stop_guard = self.scheduler_stop.lock().expect("scheduler stop lock poisoned");
+        let mut stop_guard = self
+            .scheduler_stop
+            .lock()
+            .expect("scheduler stop lock poisoned");
         if stop_guard.is_some() {
             return self.snapshot();
         }
@@ -651,7 +663,10 @@ impl RuntimeService {
             );
         }
         if self.snapshot().reset_running || self.snapshot().login_running {
-            return Err("auth state is being reset or refreshed; auth check is temporarily blocked".to_string());
+            return Err(
+                "auth state is being reset or refreshed; auth check is temporarily blocked"
+                    .to_string(),
+            );
         }
         self.run_auth_check(CheckSource::Explicit, true).await?;
         Ok(self.snapshot())
@@ -682,7 +697,10 @@ impl RuntimeService {
         if !matches!(source, CheckSource::Recovery)
             && (self.snapshot().reset_running || self.snapshot().login_running)
         {
-            return Err("auth state is being reset or refreshed; auth check is temporarily blocked".to_string());
+            return Err(
+                "auth state is being reset or refreshed; auth check is temporarily blocked"
+                    .to_string(),
+            );
         }
 
         if !storage_state_exists() {
@@ -708,8 +726,8 @@ impl RuntimeService {
                 run_hidden_script("auth:check", &[])
             }
         })
-            .await
-            .map_err(|error| format!("failed to join auth:check task: {error}"))??;
+        .await
+        .map_err(|error| format!("failed to join auth:check task: {error}"))??;
 
         let current_storage_mtime = storage_state_modified_ms(storage_state_file());
         let finished_at = now_ms();
@@ -815,7 +833,10 @@ impl RuntimeService {
         if result.success {
             Ok(result)
         } else {
-            Err(format!("auth:reset failed with exit code {}", result.exit_code))
+            Err(format!(
+                "auth:reset failed with exit code {}",
+                result.exit_code
+            ))
         }
     }
 
@@ -866,14 +887,13 @@ impl RuntimeService {
                             Some(output.stderr.clone())
                         };
                         if !output.success {
-                            snapshot.last_error = Some(script_failure_message("auth:login", &output));
+                            snapshot.last_error =
+                                Some(script_failure_message("auth:login", &output));
                         }
                     });
 
                     if output.success {
-                        let _ = service
-                            .run_auth_check(CheckSource::Recovery, false)
-                            .await;
+                        let _ = service.run_auth_check(CheckSource::Recovery, false).await;
                     }
                 }
                 Ok(Err(error)) => {
@@ -909,14 +929,20 @@ impl RuntimeService {
         self.run_collect(CollectMode::Full).await
     }
 
-    async fn run_collect(self: &Arc<Self>, collect_mode: CollectMode) -> Result<RuntimeSnapshot, String> {
+    async fn run_collect(
+        self: &Arc<Self>,
+        collect_mode: CollectMode,
+    ) -> Result<RuntimeSnapshot, String> {
         {
             let snapshot = self.snapshot();
             if snapshot.collect_refresh_running {
                 return Err("collect refresh is already running".to_string());
             }
             if snapshot.db_import_running {
-                return Err("database import is running; collect refresh is temporarily blocked".to_string());
+                return Err(
+                    "database import is running; collect refresh is temporarily blocked"
+                        .to_string(),
+                );
             }
         }
 
@@ -962,8 +988,9 @@ impl RuntimeService {
                 snapshot.collect_refresh_due = false;
                 snapshot.last_error = None;
             } else if result.success {
-                snapshot.last_error =
-                    Some("collect:all finished but full-collect-summary.json is incomplete".to_string());
+                snapshot.last_error = Some(
+                    "collect:all finished but full-collect-summary.json is incomplete".to_string(),
+                );
             } else {
                 snapshot.last_error = Some(script_failure_message("collect:all", &result));
             }
@@ -978,11 +1005,10 @@ impl RuntimeService {
             }
             Ok(self.snapshot())
         } else {
-            Err(
-                self.snapshot()
-                    .last_error
-                    .unwrap_or_else(|| "collect refresh failed".to_string()),
-            )
+            Err(self
+                .snapshot()
+                .last_error
+                .unwrap_or_else(|| "collect refresh failed".to_string()))
         }
     }
 
@@ -998,6 +1024,8 @@ impl RuntimeService {
                 settings.pending_full_collect_after_diff = false;
             }
             CollectMode::Summary => {
+                // Summary mode never imports into SQLite directly. It only
+                // decides whether the next scheduled collect must upgrade to full.
                 settings.pending_full_collect_after_diff =
                     collect_summary.is_some_and(|summary| summary.has_diff);
             }
@@ -1016,7 +1044,10 @@ impl RuntimeService {
         {
             let snapshot = self.snapshot();
             if snapshot.collect_refresh_running {
-                return Err("collect refresh is running; database import is temporarily blocked".to_string());
+                return Err(
+                    "collect refresh is running; database import is temporarily blocked"
+                        .to_string(),
+                );
             }
             if snapshot.db_import_running {
                 return Err("database import is already running".to_string());

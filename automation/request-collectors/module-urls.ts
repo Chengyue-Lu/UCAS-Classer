@@ -2,7 +2,11 @@ import { request } from '@playwright/test'
 import { resolveCourseModuleJson } from '../shared/cache-paths.js'
 import type { CourseModuleUrls, CourseSummary } from '../shared/collector-types.js'
 import { writeJsonFile } from '../shared/cache-utils.js'
-import { createRequestContext, fetchHtml, resolveModuleUrlsFromHtml } from './common.js'
+import {
+  createRequestContext,
+  fetchHtml,
+  resolveModuleUrlsFromHtml,
+} from './request-core.js'
 
 export async function collectCourseModuleUrlsByRequest(course: CourseSummary): Promise<CourseModuleUrls> {
   const apiContext = await createRequestContext()

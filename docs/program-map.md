@@ -37,6 +37,37 @@
   - `src/app/dock-controller.js`
 - `src/app.js` 当前主要保留页面编排、controller 组装和主流程入口，已不再承担 settings / download / detail / course render 的具体实现。
 - 当前前端已进入“模块职责清晰、下一步按模块删冗余”的阶段，后续重点不再是继续拆文件，而是开始审计 Rust / TS 主线。
+
+## 0.3 2026-03-15 / Rust 运行层审计补充
+
+- 已新增 Rust 侧专项审计文档：`docs/rust-runtime-audit.md`。
+- 当前已确认的 Rust 侧复杂度热点集中在：
+  - `main.rs` 中窗口/dock/tray/command 暴露混放
+  - `auth_runtime.rs` 中 service 内核与 command façade 混放
+  - `script_runner.rs` 的字符串脚本协议
+  - `db_import.rs` 中旧 schema 清理残留
+- 本轮已先完成两项低风险收口：
+  - 删除 `script_runner.rs` 中未使用的 `run_visible_login_script(...)`
+  - 合并 `downloads.rs` 中重复的脚本错误/JSON 输出解析
+- 本轮还完成了壳层结构拆分：
+  - `src-tauri/src/main.rs` 回落为 Builder + command 注册入口
+  - `src-tauri/src/desktop_shell.rs` 新承载窗口/dock/tray 壳层逻辑
+
+## 0.4 2026-03-15 / TS request 主线审计补充
+
+- 已新增 TS 侧专项审计文档：`docs/ts-request-audit.md`。
+- 当前已确认的 TS 侧复杂度热点集中在：
+  - `automation/request-collectors/full-collect.ts` 同时承担编排、模式切换和 diff 输出
+  - `automation/request-collectors/common.ts` 先前逐步膨胀成 request 解析工具箱
+  - `automation/request-course-list/course-list.ts` 保留少量和 `common.ts` 语义接近的轻量 helper
+- 本轮已先完成一项低风险收口：
+  - 合并 `full-collect.ts` 中重复的 successful fingerprint 结果过滤逻辑
+- 当前 TS 线已完成第一轮按解析域拆分：
+  - `request-core.ts`
+  - `material-parser.ts`
+  - `notice-parser.ts`
+  - `assignment-parser.ts`
+- `common.ts` 当前已回落为 compatibility barrel，后续重点转为“迁调用点 + 继续做减法”
 <!-- markdownlint-disable MD013 MD033 -->
 
 ## 1. 基线与范围
@@ -385,7 +416,11 @@ sequenceDiagram
 | `automation/downloads/common.ts` | 下载公共能力：文件名推断、相对目录规范化、冲突策略、登录页检测 | `download-file.ts`、`download-batch.ts` | 保证单文件/批量下载路径与命名规则一致 | 主线支撑 | 保留 |
 | `automation/downloads/download-batch.ts` | 批量下载 CLI，复用单套 request context 顺序下载多文件 | `download:batch`、本地调试 | 输出整批 JSON 结果 | 主线支撑 | 当前前端未直接使用，但保留为后端批量桥接能力 |
 | `automation/request-collectors/README.md` | request 全量采集说明 | 人工阅读 | 主线采集说明 | 支撑 | 保留；与现状基本一致 |
-| `automation/request-collectors/common.ts` | request 共享能力：context、HTML 抓取、通知/作业解析、资料树递归 | request collect、request course-list | 生成通知/资料/作业结构 | 主线必经 | 保留 |
+| `automation/request-collectors/common.ts` | request 兼容导出层 | request collect、request course-list | 维持旧调用面稳定 | 主线支撑 | 保留；已回落为 compatibility barrel |
+| `automation/request-collectors/request-core.ts` | request 核心能力：context、HTML 抓取、文本归一化、模块入口解析 | course-list、module-urls、collect | 作为 parser 域共享底座 | 主线支撑 | 新增；作为 request 核心边界保留 |
+| `automation/request-collectors/material-parser.ts` | request 资料树递归与 folder URL 修复 | full collect | 生成资料树结构 | 主线支撑 | 新增；从旧 common.ts 拆出 |
+| `automation/request-collectors/notice-parser.ts` | request 通知列表、详情与附件解析 | full collect | 生成通知列表与详情 | 主线支撑 | 新增；从旧 common.ts 拆出 |
+| `automation/request-collectors/assignment-parser.ts` | request 作业列表解析与待做链接补全 | full collect | 生成作业列表和 workUrl | 主线支撑 | 新增；从旧 common.ts 拆出 |
 | `automation/request-collectors/full-collect.ts` | request 采集编排，支持 `full/summary` 模式 | `collect:all`、runtime collect | cache 输出、摘要 diff、下一次 full 回补信号 | 主线必经 | 保留，当前采集主入口 |
 | `automation/request-collectors/module-urls.ts` | request 版模块入口解析 | request full collect | `course-module-*.json` | 主线必经 | 保留 |
 | `automation/request-collectors/run-full-collect.ts` | request full collect CLI 包装 | `package.json -> collect:all` | 启动 request 全量采集 | 主线必经 | 保留 |
@@ -407,6 +442,8 @@ sequenceDiagram
 | `docs/archive-plans/改进计划.md` | 历史改进计划 | 人工阅读 | 历史参考 | 非主线 | 保留为 archive |
 | `docs/development-handoff.md` | 当前交接主文档 | 人工阅读 | 当前阶段认知基线 | 支撑 | 保留 |
 | `docs/frontend-state-audit.md` | 前端状态流审计与重构路线 | 人工阅读 | 指导 `src/app.js` 的去冗余和状态收口 | 支撑 | 新增；作为前端重构施工图保留 |
+| `docs/rust-runtime-audit.md` | Rust 运行层审计与重构路线 | 人工阅读 | 指导 `main.rs`、`auth_runtime.rs`、`downloads.rs` 的后续收口 | 支撑 | 新增；作为 Rust 侧施工图保留 |
+| `docs/ts-request-audit.md` | TS request 主线审计与重构路线 | 人工阅读 | 指导 `full-collect.ts`、`common.ts`、`course-list.ts` 的后续收口 | 支撑 | 新增；作为 TS 侧施工图保留 |
 | `docs/v1.0.1-v1.1.0progress.md` | 当前版本阶段性进度 | 人工阅读 | 版本目标与待办基线 | 支撑 | 保留 |
 
 ### 7.8 Tauri 配置与资源层
@@ -435,8 +472,9 @@ sequenceDiagram
 | `src-tauri/src/bin/runtime_cli.rs` | 命令行调试 runtime | `npm run runtime:*` | watch/status/check/login/collect/import | 调试主线 | 保留；解释了部分 UI 未用 command 为何仍存在 |
 | `src-tauri/src/db_import.rs` | 从 cache JSON 导入 SQLite | runtime collect、显式 import | 建表、清表、导入课程/资料/通知/作业 | 主线必经 | 保留 |
 | `src-tauri/src/downloads.rs` | 下载桥接，读取设置并调用 Node 下载脚本 | 前端单文件/批量下载 | `download:file`、`download:batch` | 主线必经 | 保留；当前负责课程分目录与资料树路径拼接 |
+| `src-tauri/src/desktop_shell.rs` | 桌面壳层实现：窗口创建、dock 状态机、托盘与 shell command | `main.rs`、窗口事件、托盘事件 | 主窗口行为、dock/tray 交互、文件夹选择器与外链打开 | 主线必经 | 新增；作为桌面壳层边界保留 |
 | `src-tauri/src/lib.rs` | Rust 模块导出 | main、runtime_cli | 编译组织 | 支撑 | 保留 |
-| `src-tauri/src/main.rs` | Tauri 应用主入口、窗口/托盘、command 暴露 | 桌面启动 | 前端桥接与应用生命周期 | 主线必经 | 保留；但 command 面过宽，应分层整理 |
+| `src-tauri/src/main.rs` | Tauri 应用主入口与 command 注册 | 桌面启动 | 前端桥接与应用生命周期 | 主线必经 | 保留；已从窗口壳层中拆出，后续仍应继续压缩 command façade |
 | `src-tauri/src/paths.rs` | Rust 侧项目、data、cache、db 路径解析 | runtime、导库、下载 | 主目录与缓存/数据库位置 | 主线支撑 | 保留 |
 | `src-tauri/src/script_runner.rs` | Rust 调用 `npm run` 的桥 | runtime、downloads、open-url | Node 脚本执行与输出解析 | 主线必经 | 保留，但应把 script 名常量集中化 |
 
@@ -528,9 +566,9 @@ sequenceDiagram
 
 ### 10.2 下一轮先重构边界，再考虑删除
 
-1. 先转向 `src-tauri/src/main.rs`，审计 dock / tray / window command 的重复判断与职责混杂。
+1. 先按 `docs/rust-runtime-audit.md` 收 `src-tauri/src/main.rs` 的窗口/dock/tray/command 边界。
 2. 再看 `src-tauri/src/downloads.rs` 与 `automation/downloads/*`，确认下载桥是否还能继续压缩。
-3. 再进入 `automation/request-collectors/common.ts` 与 `full-collect.ts`，整理 full / summary 双模式下的重复逻辑。
+3. 再按 `docs/ts-request-audit.md` 进入 `automation/request-collectors/common.ts` 与 `full-collect.ts`，整理 full / summary 双模式下的重复逻辑。
 
 ### 10.3 下一轮不要直接做的事
 
@@ -584,3 +622,15 @@ sequenceDiagram
 3. 把发布前同步检查、package 构建和长期稳定性验证固化成标准流程。
 
 只要按这个顺序推进，删改风险会明显低于“直接大扫除式删除”。
+## 0.5 2026-03-16 / v1.1.0 收口补充
+
+- 课程分目录弹窗当前已形成“显示过滤”和“下载配置”两层分离：过滤按钮只影响弹窗内列表显示，真正持久化的仍是 `courseDownloadSubdirs`。
+- Dock 运行语义已扩展为：`collapsed` / `expanded` 都属于 dock 态，dock 态默认 `always_on_top = true`，拖离边缘或退出 dock 后恢复为非置顶。
+- 作业详情链路已从“列表摘要即展示全部”改为“按需抓取 + 本地缓存”：
+  - 前端 `detail-controller.js` 打开作业时调用 `load_assignment_detail`
+  - Rust `assignment_details.rs` 负责 SQLite 缓存命中、失效判断和脚本抓取
+  - TS `automation/request-collectors/assignment-detail.ts` 负责 request 抓取详情页
+- full import 后的桌面提醒链路已接入：
+  - 前端在检测到 `last_imported_collect_finished_at` 变化后调用 `sync_post_import_reminders`
+  - Rust `reminders.rs` 负责读取 SQLite、对比 `reminder-state.json`、按课程聚合并发送系统提醒
+  - 提醒范围覆盖新通知 / 新资料 / 新作业，首次基线建立不提醒历史存量

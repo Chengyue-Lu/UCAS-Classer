@@ -6,8 +6,14 @@ import type {
   CourseSummary,
   SemesterOptionSummary,
 } from '../shared/collector-types.js'
-import { createRequestContext, fetchHtml, normalizeText } from '../request-collectors/common.js'
+import {
+  createRequestContext,
+  fetchHtml,
+  normalizeText,
+} from '../request-collectors/request-core.js'
 
+// Request-based course list collection. This stays separate from the heavier
+// full collect flow because course list is reused as the root index.
 export async function collectCourseListByRequest(): Promise<CourseListSnapshot> {
   await ensureCollectorDirs()
 
@@ -39,6 +45,8 @@ export async function collectCourseListByRequest(): Promise<CourseListSnapshot> 
         : []
     const currentKeys = new Set(currentCourses.map(getCourseKey))
 
+    // Term classification is derived by comparing the current-term subset
+    // against the full course list returned by section `0`.
     const courses: CourseSummary[] = allCourses.map((course) => ({
       ...course,
       termCategory:

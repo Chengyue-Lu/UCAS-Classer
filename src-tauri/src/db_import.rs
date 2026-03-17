@@ -1,3 +1,7 @@
+//! Imports normalized cache snapshots into SQLite.
+//! Only a complete `full` collect result is allowed to refresh the database
+//! that the front-end reads from.
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -202,8 +206,12 @@ pub fn last_imported_collect_finished_at() -> Result<Option<String>, String> {
         return Ok(None);
     }
 
-    let connection = Connection::open(&database_path)
-        .map_err(|error| format!("failed to open database `{}`: {error}", database_path.display()))?;
+    let connection = Connection::open(&database_path).map_err(|error| {
+        format!(
+            "failed to open database `{}`: {error}",
+            database_path.display()
+        )
+    })?;
     init_schema(&connection)?;
 
     connection
@@ -233,7 +241,10 @@ pub fn import_latest_cache() -> Result<DatabaseImportResult, String> {
         ));
     }
     if summary.mode != "full" {
-        return Err("latest collect summary was produced by summary mode; full import is not allowed".to_string());
+        return Err(
+            "latest collect summary was produced by summary mode; full import is not allowed"
+                .to_string(),
+        );
     }
 
     let course_list: CourseListSnapshot = read_json_file(&course_list_file())?;
@@ -245,12 +256,20 @@ pub fn import_latest_cache() -> Result<DatabaseImportResult, String> {
         ));
     }
 
-    fs::create_dir_all(data_dir())
-        .map_err(|error| format!("failed to create data dir `{}`: {error}", data_dir().display()))?;
+    fs::create_dir_all(data_dir()).map_err(|error| {
+        format!(
+            "failed to create data dir `{}`: {error}",
+            data_dir().display()
+        )
+    })?;
 
     let database_path = database_file();
-    let mut connection = Connection::open(&database_path)
-        .map_err(|error| format!("failed to open database `{}`: {error}", database_path.display()))?;
+    let mut connection = Connection::open(&database_path).map_err(|error| {
+        format!(
+            "failed to open database `{}`: {error}",
+            database_path.display()
+        )
+    })?;
     init_schema(&connection)?;
 
     let transaction = connection
@@ -266,7 +285,9 @@ pub fn import_latest_cache() -> Result<DatabaseImportResult, String> {
     for course in &course_list.courses {
         insert_course(&transaction, &course_list.collected_at, course)?;
 
-        if let Some(module_snapshot) = read_optional_json::<CourseModuleSnapshot>(&course_module_file(&course.course_id))? {
+        if let Some(module_snapshot) =
+            read_optional_json::<CourseModuleSnapshot>(&course_module_file(&course.course_id))?
+        {
             insert_course_module(&transaction, &module_snapshot)?;
         }
 
@@ -397,6 +418,9 @@ fn init_schema(connection: &Connection) -> Result<(), String> {
                 collected_at TEXT NOT NULL
             );
 
+            -- Historical cleanup for pre-`material_nodes` / `notice_entries`
+            -- schema names. Keep until we're sure no retained local DB still
+            -- carries those tables.
             DROP TABLE IF EXISTS materials;
             DROP TABLE IF EXISTS notices;
 
@@ -810,11 +834,15 @@ fn read_optional_json<T: for<'de> Deserialize<'de>>(path: &PathBuf) -> Result<Op
     read_json_file(path).map(Some)
 }
 
-fn column_exists(connection: &Connection, table_name: &str, column_name: &str) -> Result<bool, String> {
+fn column_exists(
+    connection: &Connection,
+    table_name: &str,
+    column_name: &str,
+) -> Result<bool, String> {
     let pragma = format!("PRAGMA table_info({table_name})");
-    let mut statement = connection
-        .prepare(&pragma)
-        .map_err(|error| format!("failed to prepare table info query for `{table_name}`: {error}"))?;
+    let mut statement = connection.prepare(&pragma).map_err(|error| {
+        format!("failed to prepare table info query for `{table_name}`: {error}")
+    })?;
 
     let rows = statement
         .query_map([], |row| row.get::<_, String>(1))
@@ -841,9 +869,9 @@ fn ensure_column(
         return Ok(());
     }
 
-    connection
-        .execute(alter_sql, [])
-        .map_err(|error| format!("failed to add column `{column_name}` to `{table_name}`: {error}"))?;
+    connection.execute(alter_sql, []).map_err(|error| {
+        format!("failed to add column `{column_name}` to `{table_name}`: {error}")
+    })?;
 
     Ok(())
 }

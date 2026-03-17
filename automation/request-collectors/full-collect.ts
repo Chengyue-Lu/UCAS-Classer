@@ -1,5 +1,7 @@
 import { readFile } from 'node:fs/promises'
 
+// Main orchestrator for request-based collection. It coordinates per-course
+// module discovery, summary/full mode behavior, and diff output.
 import {
   collectorPaths,
   resolveAssignmentListJson,
@@ -16,16 +18,35 @@ import type {
   NoticeListSnapshot,
 } from '../shared/collector-types.js'
 import { pruneStaleCourseCache, runWithConcurrency, writeJsonFile } from '../shared/cache-utils.js'
+import { fillPendingAssignmentWorkUrls, extractAssignments } from './assignment-parser.js'
+import { collectRequestMaterials } from './material-parser.js'
+import { extractNotices, fillNoticeDetails } from './notice-parser.js'
 import {
-  collectRequestMaterials,
   createRequestContext,
-  extractAssignments,
-  fillPendingAssignmentWorkUrls,
-  extractNotices,
   fetchHtml,
-  fillNoticeDetails,
-} from './common.js'
+  type RequestApiContext,
+} from './request-core.js'
 import { collectCourseModuleUrlsByRequest } from './module-urls.js'
+
+type CollectCourseResult =
+  | {
+      courseId: string
+      courseName: string
+      ok: true
+      materialCount: number
+      noticeCount: number
+      assignmentCount: number
+      summaryFingerprint: string
+    }
+  | {
+      courseId: string
+      courseName: string
+      ok: false
+      error: string
+    }
+
+type SuccessfulFingerprintResult = Extract<CollectCourseResult, { ok: true }>
+type CourseCollectSummaryItem = FullCollectSummary['courses'][number]
 
 export async function runRequestFullCollect(options?: {
   concurrency?: number
@@ -46,7 +67,7 @@ export async function runRequestFullCollect(options?: {
   const results = await runWithConcurrency(
     courseList.courses,
     concurrency,
-    async (course: CourseSummary) => {
+    async (course: CourseSummary): Promise<CollectCourseResult> => {
       try {
         const modules = await collectCourseModuleUrlsByRequest(course)
         const { materials, notices, assignments } = await collectCoursePayloads(modules, mode)
@@ -77,16 +98,10 @@ export async function runRequestFullCollect(options?: {
   )
 
   const previousFingerprints = await loadCollectFingerprintState()
+  const fingerprintResults = getSuccessfulFingerprintResults(results)
   const changedCourseIds =
     mode === 'summary'
-      ? results
-          .filter(
-            (result): result is typeof result & {
-              courseId: string
-              ok: true
-              summaryFingerprint: string
-            } => result.ok && typeof result.summaryFingerprint === 'string',
-          )
+      ? fingerprintResults
           .filter((result) => previousFingerprints[result.courseId] !== result.summaryFingerprint)
           .map((result) => result.courseId)
       : []
@@ -105,15 +120,7 @@ export async function runRequestFullCollect(options?: {
     pendingFullCollectAfterDiff: hasDiff,
     changedCourseIds,
     jsonPath: collectorPaths.fullCollectSummaryJson,
-    courses: results.map((result) => ({
-      courseId: result.courseId,
-      courseName: result.courseName,
-      ok: result.ok,
-      error: result.error,
-      materialCount: result.materialCount,
-      noticeCount: result.noticeCount,
-      assignmentCount: result.assignmentCount,
-    })),
+    courses: results.map(toCourseCollectSummaryItem),
   }
 
   await writeJsonFile(summary.jsonPath, summary)
@@ -128,15 +135,7 @@ export async function runRequestFullCollect(options?: {
       updatedAt: summary.finishedAt,
       mode,
       courseFingerprints: Object.fromEntries(
-        results
-          .filter(
-            (result): result is typeof result & {
-              courseId: string
-              ok: true
-              summaryFingerprint: string
-            } => result.ok && typeof result.summaryFingerprint === 'string',
-          )
-          .map((result) => [result.courseId, result.summaryFingerprint]),
+        fingerprintResults.map((result) => [result.courseId, result.summaryFingerprint]),
       ),
     })
   }
@@ -176,26 +175,11 @@ async function collectCoursePayloads(
 }
 
 async function collectMaterialSnapshot(
-  apiContext: Awaited<ReturnType<typeof createRequestContext>>,
+  apiContext: RequestApiContext,
   modules: CourseModuleUrls,
 ): Promise<MaterialListSnapshot> {
   if (!modules.materialsUrl) {
-    return {
-      collectedAt: new Date().toISOString(),
-      browserChannel: 'Request context',
-      courseId: modules.courseId,
-      courseName: modules.name,
-      checkedUrl: modules.courseHomeUrl,
-      currentUrl: modules.courseHomeUrl,
-      pageTitle: modules.pageTitle,
-      itemCount: 0,
-      fileCount: 0,
-      folderCount: 0,
-      htmlPath: '',
-      screenshotPath: '',
-      jsonPath: resolveMaterialListJson(modules.courseId),
-      items: [],
-    }
+    return createEmptyMaterialSnapshot(modules)
   }
 
   const collected = await collectRequestMaterials(apiContext, modules)
@@ -221,30 +205,19 @@ async function collectMaterialSnapshot(
 }
 
 async function collectNoticeSnapshot(
-  apiContext: Awaited<ReturnType<typeof createRequestContext>>,
+  apiContext: RequestApiContext,
   modules: CourseModuleUrls,
   mode: 'full' | 'summary',
 ): Promise<NoticeListSnapshot> {
   if (!modules.noticesUrl) {
-    return {
-      collectedAt: new Date().toISOString(),
-      browserChannel: 'Request context',
-      courseId: modules.courseId,
-      courseName: modules.name,
-      checkedUrl: modules.courseHomeUrl,
-      currentUrl: modules.courseHomeUrl,
-      pageTitle: modules.pageTitle,
-      itemCount: 0,
-      htmlPath: '',
-      screenshotPath: '',
-      jsonPath: resolveNoticeListJson(modules.courseId),
-      items: [],
-    }
+    return createEmptyNoticeSnapshot(modules)
   }
 
   const fetch = await fetchHtml(apiContext, modules.noticesUrl, `notice-list-${modules.courseId}`)
   const items = extractNotices(fetch.bodyText, fetch.finalUrl)
   if (mode === 'full') {
+    // Summary mode intentionally stops at list-level metadata so background
+    // collect stays cheaper unless a later full pass is required.
     await fillNoticeDetails(apiContext, items)
   }
 
@@ -328,24 +301,11 @@ function createCourseSummaryFingerprint(input: {
 }
 
 async function collectAssignmentSnapshot(
-  apiContext: Awaited<ReturnType<typeof createRequestContext>>,
+  apiContext: RequestApiContext,
   modules: CourseModuleUrls,
 ): Promise<AssignmentListSnapshot> {
   if (!modules.assignmentsUrl) {
-    return {
-      collectedAt: new Date().toISOString(),
-      browserChannel: 'Request context',
-      courseId: modules.courseId,
-      courseName: modules.name,
-      checkedUrl: modules.courseHomeUrl,
-      currentUrl: modules.courseHomeUrl,
-      pageTitle: modules.pageTitle,
-      itemCount: 0,
-      htmlPath: '',
-      screenshotPath: '',
-      jsonPath: resolveAssignmentListJson(modules.courseId),
-      items: [],
-    }
+    return createEmptyAssignmentSnapshot(modules)
   }
 
   const fetch = await fetchHtml(
@@ -369,5 +329,88 @@ async function collectAssignmentSnapshot(
     screenshotPath: '',
     jsonPath: resolveAssignmentListJson(modules.courseId),
     items,
+  }
+}
+
+function getSuccessfulFingerprintResults(
+  results: CollectCourseResult[],
+): SuccessfulFingerprintResult[] {
+  return results.filter((result): result is SuccessfulFingerprintResult => result.ok)
+}
+
+function toCourseCollectSummaryItem(result: CollectCourseResult): CourseCollectSummaryItem {
+  if (result.ok) {
+    return {
+      courseId: result.courseId,
+      courseName: result.courseName,
+      ok: true,
+      error: undefined,
+      materialCount: result.materialCount,
+      noticeCount: result.noticeCount,
+      assignmentCount: result.assignmentCount,
+    }
+  }
+
+  return {
+    courseId: result.courseId,
+    courseName: result.courseName,
+    ok: false,
+    error: result.error,
+    materialCount: 0,
+    noticeCount: 0,
+    assignmentCount: 0,
+  }
+}
+
+function createEmptyMaterialSnapshot(modules: CourseModuleUrls): MaterialListSnapshot {
+  return {
+    collectedAt: new Date().toISOString(),
+    browserChannel: 'Request context',
+    courseId: modules.courseId,
+    courseName: modules.name,
+    checkedUrl: modules.courseHomeUrl,
+    currentUrl: modules.courseHomeUrl,
+    pageTitle: modules.pageTitle,
+    itemCount: 0,
+    fileCount: 0,
+    folderCount: 0,
+    htmlPath: '',
+    screenshotPath: '',
+    jsonPath: resolveMaterialListJson(modules.courseId),
+    items: [],
+  }
+}
+
+function createEmptyNoticeSnapshot(modules: CourseModuleUrls): NoticeListSnapshot {
+  return {
+    collectedAt: new Date().toISOString(),
+    browserChannel: 'Request context',
+    courseId: modules.courseId,
+    courseName: modules.name,
+    checkedUrl: modules.courseHomeUrl,
+    currentUrl: modules.courseHomeUrl,
+    pageTitle: modules.pageTitle,
+    itemCount: 0,
+    htmlPath: '',
+    screenshotPath: '',
+    jsonPath: resolveNoticeListJson(modules.courseId),
+    items: [],
+  }
+}
+
+function createEmptyAssignmentSnapshot(modules: CourseModuleUrls): AssignmentListSnapshot {
+  return {
+    collectedAt: new Date().toISOString(),
+    browserChannel: 'Request context',
+    courseId: modules.courseId,
+    courseName: modules.name,
+    checkedUrl: modules.courseHomeUrl,
+    currentUrl: modules.courseHomeUrl,
+    pageTitle: modules.pageTitle,
+    itemCount: 0,
+    htmlPath: '',
+    screenshotPath: '',
+    jsonPath: resolveAssignmentListJson(modules.courseId),
+    items: [],
   }
 }

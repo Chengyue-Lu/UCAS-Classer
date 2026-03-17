@@ -1,3 +1,6 @@
+//! Reads normalized dashboard data from SQLite for the front-end.
+//! This layer mirrors UI-facing shapes instead of raw import snapshots.
+
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 
@@ -388,7 +391,9 @@ fn load_course_assignments(
                 raw_text: row.get::<_, String>(5)?,
             })
         })
-        .map_err(|error| format!("failed to query assignments for course `{course_id}`: {error}"))?;
+        .map_err(|error| {
+            format!("failed to query assignments for course `{course_id}`: {error}")
+        })?;
 
     rows.collect::<Result<Vec<_>, _>>()
         .map_err(|error| format!("failed to read assignments: {error}"))

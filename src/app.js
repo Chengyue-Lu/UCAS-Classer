@@ -33,6 +33,7 @@ import { createDetailAction, createDetailChip, createTextBlock } from './app/mod
 import { createSettingsSaver } from './app/settings-save.js'
 import { createSettingsController } from './app/settings-controller.js'
 
+// Entry file: wires DOM nodes, state, and the internal controllers together.
 const appShell = document.querySelector('#app-shell')
 const courseList = document.querySelector('#course-list')
 const courseCount = document.querySelector('#course-count')
@@ -144,6 +145,8 @@ function setModalFeedback(message, tone = 'neutral') {
   modalFeedback.dataset.tone = tone
 }
 
+// Some controllers need to reference each other, but we still want to keep
+// module construction local to this file instead of reintroducing globals.
 const detailControllerRef = {
   closeDetailModal: null,
   openDetailModal: null,
@@ -212,6 +215,7 @@ const detailController = createDetailController({
   copyText,
   openExternalUrl,
   openAuthenticatedUrl,
+  loadAssignmentDetail,
 })
 
 const { closeDetailModal, openDetailModal } = detailController
@@ -281,6 +285,8 @@ function resetModal() {
   setModalFeedback('')
 }
 
+// Settings modal meta is rebuilt from state so every save path shares the same
+// compact summary row instead of maintaining duplicate DOM updates.
 function syncSettingsMeta(settings) {
   const downloadChip = createDetailChip('下载目录', settings.downloadDir || '未设置')
   downloadChip.classList.add('detail-chip--wide')
@@ -348,6 +354,22 @@ async function openAuthenticatedUrl(url) {
   }
 }
 
+async function loadAssignmentDetail(request) {
+  return invokeRequiredTauriCommand(
+    'load_assignment_detail',
+    { request },
+    '当前不在 Tauri 环境内，无法加载作业详情。',
+  )
+}
+
+async function syncPostImportReminders() {
+  try {
+    await invokeTauriCommand('sync_post_import_reminders')
+  } catch (error) {
+    console.error('Failed to sync post-import reminders', error)
+  }
+}
+
 async function loadDashboardData() {
   const data = await invokeTauriCommand('load_dashboard_data')
   if (!data) {
@@ -389,6 +411,7 @@ async function refreshRuntimeStatus() {
   state.runtime = snapshot
   syncRuntimePanel()
 
+  // SQLite is reloaded only when import completes with a new version marker.
   const importVersion =
     snapshot.last_imported_collect_finished_at ||
     String(snapshot.last_db_import_finished_at_ms || '')
@@ -396,6 +419,7 @@ async function refreshRuntimeStatus() {
   if (importVersion && importVersion !== state.lastSeenDbImportFinishedAt) {
     state.lastSeenDbImportFinishedAt = importVersion
     await loadDashboardData()
+    await syncPostImportReminders()
   }
 }
 
@@ -518,6 +542,8 @@ async function initializeRuntime() {
 }
 
 async function initialize() {
+  // Bind all page-local interactions before waiting for Tauri so a plain
+  // browser open still leaves the page in a predictable fallback state.
   bindWindowControls()
   bindRuntimeButtons()
   bindStatusSurface()

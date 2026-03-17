@@ -1,3 +1,5 @@
+// Centralized Tauri bridge helpers. UI code should only deal with
+// "bridge unavailable" vs "command failed", not with low-level globals.
 const DEFAULT_BRIDGE_ERROR_MESSAGE = '当前不在 Tauri 环境内，无法执行此操作。'
 
 function getTauriInvoke() {

@@ -1,7 +1,12 @@
+//! Rust-side download bridge.
+//! This layer receives already-normalized relative paths from the front-end,
+//! applies a final safety normalization pass, and proxies into Node scripts.
+
 use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use crate::app_settings::load_app_settings;
@@ -68,7 +73,9 @@ pub async fn download_protected_file(
     .map_err(|error| format!("download task join failure: {error}"))?
 }
 
-pub async fn download_protected_files(requests: Vec<DownloadRequest>) -> Result<BatchDownloadResult, String> {
+pub async fn download_protected_files(
+    requests: Vec<DownloadRequest>,
+) -> Result<BatchDownloadResult, String> {
     tokio::task::spawn_blocking(move || download_protected_files_blocking(requests))
         .await
         .map_err(|error| format!("download batch task join failure: {error}"))?
@@ -105,34 +112,24 @@ fn download_protected_file_blocking(
     }
 
     owned_args.push("--conflict".to_string());
-    owned_args.push(normalize_conflict_policy(conflict_policy.as_deref(), "rename"));
+    owned_args.push(normalize_conflict_policy(
+        conflict_policy.as_deref(),
+        "rename",
+    ));
 
     let borrowed_args = owned_args.iter().map(String::as_str).collect::<Vec<_>>();
     let output = run_hidden_script("download:file", &borrowed_args)?;
 
     if !output.success {
-        let error_output = if !output.stderr.is_empty() {
-            output.stderr
-        } else if !output.stdout.is_empty() {
-            output.stdout
-        } else {
-            format!("download:file failed with exit code {}", output.exit_code)
-        };
-        return Err(error_output);
+        return Err(extract_script_error("download:file", &output));
     }
 
-    let json_line = output
-        .stdout
-        .lines()
-        .rev()
-        .find(|line| !line.trim().is_empty())
-        .ok_or_else(|| "failed to parse download:file output: stdout was empty".to_string())?;
-
-    serde_json::from_str::<ProtectedDownloadResult>(json_line)
-        .map_err(|error| format!("failed to parse download:file output: {error}"))
+    parse_script_json_output("download:file", &output.stdout)
 }
 
-fn download_protected_files_blocking(requests: Vec<DownloadRequest>) -> Result<BatchDownloadResult, String> {
+fn download_protected_files_blocking(
+    requests: Vec<DownloadRequest>,
+) -> Result<BatchDownloadResult, String> {
     let settings = load_app_settings()?;
     if requests.is_empty() {
         return Ok(BatchDownloadResult {
@@ -182,25 +179,10 @@ fn download_protected_files_blocking(requests: Vec<DownloadRequest>) -> Result<B
     let output = output?;
 
     if !output.success {
-        let error_output = if !output.stderr.is_empty() {
-            output.stderr
-        } else if !output.stdout.is_empty() {
-            output.stdout
-        } else {
-            format!("download:batch failed with exit code {}", output.exit_code)
-        };
-        return Err(error_output);
+        return Err(extract_script_error("download:batch", &output));
     }
 
-    let json_line = output
-        .stdout
-        .lines()
-        .rev()
-        .find(|line| !line.trim().is_empty())
-        .ok_or_else(|| "failed to parse download:batch output: stdout was empty".to_string())?;
-
-    serde_json::from_str::<BatchDownloadResult>(json_line)
-        .map_err(|error| format!("failed to parse download:batch output: {error}"))
+    parse_script_json_output("download:batch", &output.stdout)
 }
 
 fn normalize_relative_subdir(value: Option<&str>) -> Option<String> {
@@ -250,4 +232,27 @@ fn create_manifest_file_path() -> PathBuf {
         std::process::id(),
         now_ms
     ))
+}
+
+fn extract_script_error(script: &str, output: &crate::script_runner::ScriptOutput) -> String {
+    if !output.stderr.is_empty() {
+        return output.stderr.clone();
+    }
+
+    if !output.stdout.is_empty() {
+        return output.stdout.clone();
+    }
+
+    format!("{script} failed with exit code {}", output.exit_code)
+}
+
+fn parse_script_json_output<T: DeserializeOwned>(script: &str, stdout: &str) -> Result<T, String> {
+    let json_line = stdout
+        .lines()
+        .rev()
+        .find(|line| !line.trim().is_empty())
+        .ok_or_else(|| format!("failed to parse {script} output: stdout was empty"))?;
+
+    serde_json::from_str::<T>(json_line)
+        .map_err(|error| format!("failed to parse {script} output: {error}"))
 }

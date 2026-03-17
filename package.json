@@ -14,6 +14,7 @@
     "download:file": "tsx automation/downloads/download-file.ts",
     "download:batch": "tsx automation/downloads/download-batch.ts",
     "courses:collect": "tsx automation/request-course-list/run-course-list.ts",
+    "assignment:detail": "tsx automation/request-collectors/run-assignment-detail.ts",
     "collect:all": "tsx automation/request-collectors/run-full-collect.ts",
     "runtime:watch": "cargo run --quiet --manifest-path src-tauri/Cargo.toml --bin runtime_cli -- watch",
     "runtime:status": "cargo run --quiet --manifest-path src-tauri/Cargo.toml --bin runtime_cli -- status",

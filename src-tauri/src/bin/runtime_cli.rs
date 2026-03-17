@@ -64,7 +64,9 @@ async fn run() -> Result<(), String> {
     }
 }
 
-async fn watch_runtime(runtime: ucas_classer::auth_runtime::SharedRuntimeService) -> Result<(), String> {
+async fn watch_runtime(
+    runtime: ucas_classer::auth_runtime::SharedRuntimeService,
+) -> Result<(), String> {
     let snapshot = runtime.start_scheduler();
     println!("runtime scheduler started; Ctrl+C to stop; r + Enter for cookie refresh due; c + Enter for collect refresh due; g + Enter to run collect; i + Enter to run db import");
     print_snapshot(&snapshot);
@@ -180,7 +182,8 @@ async fn wait_for_db_import_to_settle(
         let snapshot = runtime.snapshot();
         print_snapshot(&snapshot);
 
-        let import_completed = snapshot.last_db_import_finished_at_ms != previous_import_finished_at_ms;
+        let import_completed =
+            snapshot.last_db_import_finished_at_ms != previous_import_finished_at_ms;
         if !snapshot.db_import_running && (!snapshot.db_import_due || import_completed) {
             if import_completed {
                 if snapshot.last_db_import_ok == Some(true) {

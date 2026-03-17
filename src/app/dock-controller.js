@@ -1,3 +1,4 @@
+// Keeps dock state synchronization isolated from the rest of the page logic.
 export function createDockController({
   appShell,
   dockHandle,
@@ -139,6 +140,8 @@ export function createDockController({
       return
     }
 
+    // The short delay prevents accidental collapse while the cursor is still
+    // crossing the window edge after an auto-expand.
     clearDockCollapseTimer()
     dockCollapseTimer = window.setTimeout(() => {
       dockCollapseTimer = null
@@ -170,6 +173,8 @@ export function createDockController({
 
   function startDockStatePolling() {
     clearDockStatePollTimer()
+    // Events are the primary source; polling only fills gaps when the bridge
+    // cannot subscribe or an event was missed.
     dockStatePollTimer = window.setInterval(() => {
       refreshWindowDockState()
     }, dockStateEventsAvailable ? 12000 : 1500)

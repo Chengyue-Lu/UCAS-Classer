@@ -1,3 +1,5 @@
+// Shared snapshot contracts used by request collection, cache import, and the
+// Rust-side dashboard reader. Keep these types stable across layers.
 export type CourseSummary = {
   courseId: string
   clazzId: string
