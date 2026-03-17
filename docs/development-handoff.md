@@ -1,142 +1,169 @@
-# UCAS Classer 开发交接表
+# UCAS Classer 交接文档
 
-## 2026-03-13 / v1.0.4 补充更新
-- 自动侧收 MVP 已接入开发端与打包端壳层：当前只支持左右边缘，不做上下吸附。
-- 侧收配置已进入 `app-settings.json`，会保存自动侧收开关、上次贴边方向、展开尺寸和普通窗口位置。
-- 侧收判定已改为基于显示器 `work_area` 的窗口外框区间命中；贴边或越过边缘均可命中。
-- 托盘重开窗口时会先恢复正常展开尺寸，再进入常规贴边判定。
-- `v1.0.4` 当前已作为打包发版基线，系统路径存储约束保持不变。
-<!-- markdownlint-disable -->
+更新时间：2026-03-17  
+文档定位：当前项目的总交接入口。  
+阅读建议：先看本文，再按需打开 [program-map.md](/d:/lcy/ucasclasser-develop/docs/program-map.md) 和 [v1.0.1-v1.1.0progress.md](/d:/lcy/ucasclasser-develop/docs/v1.0.1-v1.1.0progress.md)。
 
-## 2026-03-12 / v1.0.3 补充更新
-- 下载目录现已支持系统文件夹选择器。
-- 课程分目录现已接入设置持久化与下载链路，下载目标为“主下载目录 / 课程子目录 / 资料树父级目录”。
-- 资料模块现已支持批量下载，并保留资料树中的嵌套文件夹结构；批量重名文件按覆盖处理。
-- 主界面新增下载状态行：`Waiting / Downloading / Success / Fail`，成功态 20 秒后自动回到 `Waiting`。
-- 登录态存储路径已对齐；开发端兼容仓库内 `data/auth/`，打包端继续走系统路径，不做回退。
-- `ucasclasser-package/` 继续只维护 package 壳层，运行共享层通过 `scripts/sync-package-runtime.mjs` 下发。
-- collect 已分成 `summary / full`：启动首次 collect 与手动 Collect 固定走 `full`，后台自动 collect 默认走 `summary`，当 summary 发现摘要 diff 时，会挂起“下一次自动 full”标记。
-## 项目现状
-- 当前开发主线已经从页面驱动逐步迁到 `API / request` 路线。
-- 登录仍保留浏览器参与，但登录后的绝大多数动作已经不再依赖可见页面。
-- 桌面端基于 `Tauri 2 + Rust + 原生前端 JS`。
-- 数据持久化使用 `SQLite`，前端通过 Tauri 命令读取。
-- 打包实验与正式发布工作放在 `ucasclasser-package/`，开发目录与打包目录已分离。
+## 1. 项目一句话
 
-## 当前已稳定能力
-- SEP 登录保存 `storage-state`
-- API 化 `auth:check`
-- API 化课程列表刷新
-- API 化模块入口解析
-- API 化资料 / 通知 / 作业采集
-- 资料树递归解析
-- 通知详情与附件导入
-- 受保护资源下载
-- SQLite 导库与前端展示
-- 学期分类过滤：`全部 / 当前学期 / 以前学期`
-- 托盘常驻、关闭后保留应用
-- 单实例运行
+`UCAS Classer` 是一个围绕国科大课程平台构建的 Windows 桌面助手。当前主线已经从“浏览器页面驱动”切到“`request/API + 本地 SQLite` 驱动”，浏览器只保留在登录和少量登录态维护环节。
 
-## 目录说明
+## 2. 当前版本状态
+
+- 当前开发基线：`v1.0.4`
+- 当前目标版本：`v1.1.0`
+- 当前状态：已接近 `1.1.0` 收口，剩余工作以体验打磨、回归验证和发布整理为主
+
+## 3. 当前稳定能力
+
+### 3.1 登录与运行时
+
+- SEP 登录与 `storage-state` 保存
+- `auth:check` API 化
+- 启动自动 `check + full collect`
+- 后台调度拆分为 `check / collect / cookie refresh`
+- 自动 collect 已分为 `summary / full`
+- `summary` 只做粗采探测，不导库
+- `summary` 发现 diff 后，下一次自动 collect 升级为 `full`
+
+### 3.2 数据采集与展示
+
+- 课程列表、模块入口、资料、通知、作业主线均为 request 采集
+- SQLite 导库与 dashboard 展示已稳定
+- 课程按 `全部 / 当前学期 / 以往学期` 分类展示
+- 作业详情已支持“点开按需抓取 + 本地缓存”
+- 新通知 / 新资料 / 新作业的系统提醒已接入桌面端
+
+### 3.3 下载与目录
+
+- 下载目录支持系统文件夹选择器
+- 支持课程分目录
+- 课程分目录弹窗支持 `全部 / 当前学期 / 以往学期` 过滤显示
+- 资料支持批量下载
+- 资料树中的子文件夹结构会在本地保留
+- 下载状态栏支持 `Waiting / Downloading / Success / Fail`
+
+### 3.4 桌面壳层
+
+- 托盘常驻
+- 单实例
+- 自动侧收 MVP
+- dock 收起与边缘展开态会置顶
+- 关闭主窗口后可从托盘恢复
+
+## 4. 当前目录职责
+
+- `src/`
+  - 前端页面与模块化 JS
+  - `src/app.js` 现在只是 orchestration 入口
+  - 具体逻辑已拆到 `src/app/*.js`
+- `src-tauri/`
+  - 开发端 Rust 运行层
+  - `main.rs` 负责 Builder 和 command 注册
+  - `desktop_shell.rs` 负责窗口、dock、tray
+  - `auth_runtime.rs` 负责调度核心
 - `automation/auth/`
-  - 正式认证链
-  - `auth:login` 当前走 `login-and-save-sep.ts`
-  - `auth:check` 当前走 `check-api.ts`
+  - 登录、登录态校验、打开已登录页面
 - `automation/request-course-list/`
-  - 课程列表 request 路线
+  - 课程列表采集
 - `automation/request-collectors/`
-  - 模块入口刷新、通知/资料/作业内容采集主线
+  - 模块入口、资料、通知、作业、作业详情采集
 - `automation/downloads/`
   - 受保护文件下载
-- `src-tauri/`
-  - 开发端 Rust 后端
-- `src/`
-  - 开发端前端
+- `automation/shared/`
+  - request 主线共享工具
+- `docs/`
+  - 当前有效文档与归档文档
 - `ucasclasser-package/`
-  - 打包专用副本
-  - 包含路径迁移、runtime 资源、sidecar 与安装包配置
-- `docs/archive-plans/`
-  - 已完成阶段文档归档
+  - 本地打包壳层目录
+  - 继续走系统路径存储，不是主仓权威源码
 
-## 当前常用命令
-- 开发端运行
-  - `npm run tauri:dev`
-- 登录 / 校验
-  - `npm run auth:reset`
-  - `npm run auth:login`
-  - `npm run auth:check`
-- 下载
-  - `npm run download:file -- --url <url> --output-dir <dir>`
-  - `npm run download:batch -- --manifest <path> --output-dir <dir> --conflict overwrite`
-- 采集 / 导库
-  - `npm run courses:collect`
-  - `npm run collect:all -- --mode full --concurrency 4`
-  - `npm run collect:all -- --mode summary --concurrency 4`
-  - `npm run runtime:import`
-- 检查
-  - `npm run check`
-  - `cargo check --manifest-path src-tauri/Cargo.toml`
+## 5. 当前文档体系
 
-## 运行时调度现状
-- `check`、`collect`、`cookie refresh` 已分离。
-- `check` 与 `collect` 允许并行，不再沿用旧浏览器链路的互斥思路。
-- 应用启动时会主动做一轮 `check + full collect`，规避“首轮 collect 计时基准不直观”的问题。
-- 后台自动 collect 默认走 `summary`，不抓通知详情，也不触发导库。
-- `summary` 发现课程摘要变化后，不在同轮补跑，而是把下一次自动 collect 升级为 `full`。
-- `cookie refresh` 仍然单独存在，因为它仍需后台浏览器。
+### 5.1 当前有效
 
-## 设置页现状
-- 下载目录独立一行
-- 课程范围切换点击即生效
-- 自动侧收开关点击即生效
-- `Check / Collect / Cookie` 时间输入压缩到一行
-- 其余设置仍通过“保存设置”统一提交
+- [development-handoff.md](/d:/lcy/ucasclasser-develop/docs/development-handoff.md)
+  - 当前交接入口
+- [program-map.md](/d:/lcy/ucasclasser-develop/docs/program-map.md)
+  - 主程序地图、入口、调用链、风险点
+- [v1.0.1-v1.1.0progress.md](/d:/lcy/ucasclasser-develop/docs/v1.0.1-v1.1.0progress.md)
+  - 版本进度与下阶段 focus
+- [package-runtime-sync.md](/d:/lcy/ucasclasser-develop/docs/package-runtime-sync.md)
+  - 主仓与 package 运行层同步规则
 
-## 打包端说明
-- 正式发布时只改 `ucasclasser-package/`
-- 需要同步的通常是：
-  - `src/`
-  - `src-tauri/`
-  - `automation/`
-- 不要轻易覆盖 package 端已存在的这些能力：
-  - 资源路径迁移
-  - runtime 资源打包
-  - 单实例
-  - 首次使用说明
-  - 打包专用 Node runtime 调度
+### 5.2 已归档
 
-## 当前已知边界
-- 登录完全去浏览器化仍未并入主线，只在测试目录做过探索。
-- `cookie refresh` 仍然依赖后台浏览器，不是纯 API。
-- 某些页面中文在终端里显示会乱码；读取中文文件时应优先按 UTF-8 理解内容，而不是依赖终端直接显示。
+- [archive-completed/README.md](/d:/lcy/ucasclasser-develop/docs/archive-completed/README.md)
+  - 已完成审计与临时文档索引
+- [archive-plans](/d:/lcy/ucasclasser-develop/docs/archive-plans)
+  - 旧计划与历史阶段文档
 
-## 下一阶段建议
-- 通知 / 作业详情内部展示继续完善
-- 通知 / 作业附件是否要批量下载可以单独评估
-- 继续验证托盘与调度在打包端的长期稳定性
-## 2026-03-16 / v1.1.0 交接补充
+## 6. 当前常用命令
 
-当前主线又新增了 4 个接近收口版本的能力：
+```powershell
+# 开发端
+npm run tauri:dev
 
-- 课程分目录弹窗支持按 `全部 / 当前学期 / 以往学期` 过滤显示，过滤依据直接复用 dashboard 里的 `termCategory`。
-- Dock 模式已经把“仅 dock 时置顶”做成一致语义：收起和边缘展开都置顶，拖出边缘或退出 dock 才取消。
-- 作业详情不再只展示列表摘要；现在是点开作业后按需抓取详情，并将结果缓存到 SQLite 的 `assignment_detail_cache`。
-- 系统提醒已接入桌面端：full import 成功后按课程聚合提醒新通知 / 新资料 / 新作业，提醒基线保存在 `reminder-state.json`。
+# 登录与校验
+npm run auth:reset
+npm run auth:login
+npm run auth:check
 
-当前几个关键落点：
+# 采集
+npm run courses:collect
+npm run collect:all -- --mode full --concurrency 4
+npm run collect:all -- --mode summary --concurrency 4
 
-- 前端：
-  - `src/app/settings-controller.js` 负责课程分目录过滤 UI
-  - `src/app/detail-controller.js` 负责作业详情加载态、缓存命令调用和重试
-- Rust：
-  - `src-tauri/src/desktop_shell.rs` 负责 dock 置顶
-  - `src-tauri/src/assignment_details.rs` 负责作业详情缓存
-  - `src-tauri/src/reminders.rs` 负责提醒状态与系统通知
-- TS：
-  - `automation/request-collectors/assignment-detail.ts` 负责 request 抓取作业详情页
+# 作业详情单独抓取
+npm run assignment:detail -- --course-id <id> --work-url <url>
 
-这意味着当前 `1.1.0` 剩余工作更偏向：
+# 导库
+npm run runtime:import
 
-- 自动侧收手感与视觉打磨
-- 详情展示细节继续精修
-- 打包前的双端回归与通知实际体验验证
+# 下载
+npm run download:file -- --url <url> --output-dir <dir>
+npm run download:batch -- --manifest <path> --output-dir <dir> --conflict overwrite
+
+# 检查
+npm run check
+cargo check --manifest-path src-tauri/Cargo.toml
+```
+
+## 7. 当前已知边界与风险
+
+- 打包端仍是“主仓共享运行层 + package 壳层手工维护”的模式，不是完全单仓单入口。
+- `scripts/sync-package-runtime.mjs --check` 仍可能出现少量误报；以实际同步结果和编译结果为准。
+- 自动侧收已经可用，但仍有体验打磨空间，尤其是动画手感和窗口恢复细节。
+- 作业详情第一版已经落地，但详情清洗与图片体验仍有优化空间。
+- 独立图片预览窗口的尝试已回退，当前不属于稳定能力，不要按该方案继续叠改。
+
+## 8. 接手时优先注意
+
+### 8.1 开发与打包边界
+
+- 主仓是运行主线唯一权威源码
+- `ucasclasser-package/` 只维护 package 壳层
+- 打包端系统路径存储约束不能改
+
+### 8.2 中文文件
+
+- 读取中文文档时按 UTF-8 处理
+- 终端中出现中文乱码时，不要把乱码当成文件真实内容
+
+### 8.3 下载链
+
+- 现在统一规则是“前端负责计算最终 `relativeSubdir`，后端只按相对路径落盘”
+- 不要再把课程分目录重复补到 Rust 层
+
+## 9. 下一阶段建议
+
+如果以 `1.1.0` 为目标，建议按下面顺序收尾：
+
+1. 继续打磨自动侧收、托盘恢复和窗口手感
+2. 精修作业详情内容清洗与图片体验
+3. 做一次完整的通知 / 资料 / 作业提醒回归验证
+4. 做开发端与打包端的最终发布前回归
+
+## 10. 一句话结论
+
+当前项目已经不是“探索期原型”，而是“主线已成型、模块边界已基本清楚、进入收口和发布整理期”的状态。后续工作重点不再是大规模重写，而是围绕体验、稳定性和发布流程继续做减法。

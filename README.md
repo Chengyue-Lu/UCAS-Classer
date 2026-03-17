@@ -27,21 +27,25 @@
 
 ## 当前进度
 
-- ✅ 登录保存已切到 SEP 入口，停在 portal 也可自动保存
-- ✅ `auth:check` 已改为 API 检查
-- ✅ 课程列表、模块入口、通知/资料/作业采集主线已切到 request-driven
-- ✅ 资料树递归、通知详情、受保护下载、本地 SQLite 导库已跑通
-- ✅ 桌面端已具备托盘常驻、单实例、启动自动 `check + collect`
-- ✅ 打包版已支持单实例、首次说明文件、已登录 Edge 打开通知原始页
-- 🚧 当前主要工作转向：稳定性验证、发布整理
+- ✅ 登录保存已切到 SEP 入口，`auth:check` 已改为 API 检查
+- ✅ 课程列表、模块入口、通知 / 资料 / 作业采集主线已切到 request-driven
+- ✅ 自动 collect 已拆成 `summary / full`
+- ✅ 下载目录选择、课程分目录、资料批量下载已完成
+- ✅ 作业详情已支持“点开按需抓取 + 本地缓存”
+- ✅ 系统提醒已支持新通知 / 新资料 / 新作业按课程聚合提醒
+- ✅ 桌面端已具备托盘常驻、单实例、自动侧收 MVP、启动自动 `check + full collect`
+- 🚧 当前主要工作转向：体验打磨、双端回归、发布整理
 
 ## 仓库提示
 
 - `automation/`：认证、采集、下载脚本
 - `src-tauri/`：桌面端后端、运行时调度与数据库导入逻辑
 - `src/`：当前桌面前端
-- `docs/program-map.md`：当前主线、调用图、重复实现与裁剪分析总表
-- `docs/archive-plans/`：已完成的计划与阶段性文档
+- `docs/development-handoff.md`：当前交接入口
+- `docs/program-map.md`：当前主线、入口、调用链与边界总图
+- `docs/v1.0.1-v1.1.0progress.md`：版本进度
+- `docs/archive-completed/`：已完成审计与临时文档归档
+- `docs/archive-plans/`：历史计划与阶段文档
 
 ## 使用说明
 
