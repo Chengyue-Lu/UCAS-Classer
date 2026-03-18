@@ -337,10 +337,10 @@ export function createSettingsController({
     )
     const cookieRefreshField = createSettingsField(
       'COOKIE 刷新间隔',
-      intervalSecsToMinutes(state.settings.cookieRefreshIntervalSecs, 720),
+      intervalSecsToMinutes(state.settings.cookieRefreshIntervalSecs, 1440),
       {
         fieldName: 'cookieRefreshIntervalSecs',
-        placeholder: '默认 720',
+        placeholder: '默认 1440',
         type: 'number',
         min: '1',
         compact: true,
@@ -517,7 +517,7 @@ export function createSettingsController({
                 collectIntervalSecs: intervalMinutesToSecs(collectField.control.value, 15 * 60),
                 cookieRefreshIntervalSecs: intervalMinutesToSecs(
                   cookieRefreshField.control.value,
-                  720 * 60,
+                  1440 * 60,
                 ),
               },
               {

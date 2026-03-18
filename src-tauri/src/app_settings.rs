@@ -10,7 +10,7 @@ use crate::paths::{app_settings_file, data_dir, project_root};
 
 const DEFAULT_AUTH_CHECK_INTERVAL_SECS: u64 = 180 * 60;
 const DEFAULT_COLLECT_INTERVAL_SECS: u64 = 15 * 60;
-const DEFAULT_COOKIE_REFRESH_INTERVAL_SECS: u64 = 720 * 60;
+const DEFAULT_COOKIE_REFRESH_INTERVAL_SECS: u64 = 1440 * 60;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]

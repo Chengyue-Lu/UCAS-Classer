@@ -284,7 +284,7 @@ impl RuntimeService {
         Ok(true)
     }
 
-    fn try_clear_interrupt_after_fresh_storage(&self) {
+    fn try_clear_interrupt_after_successful_check(&self, source: CheckSource) {
         let now = now_ms();
         let current_storage_mtime = storage_state_modified_ms(storage_state_file());
 
@@ -295,24 +295,39 @@ impl RuntimeService {
                 return;
             }
 
-            match (snapshot.interrupt_storage_mtime_ms, current_storage_mtime) {
-                (Some(previous), Some(current)) if current > previous => {
-                    snapshot.interrupt_flag = false;
-                    snapshot.interrupt_reason = None;
-                    snapshot.interrupt_since_ms = None;
-                    snapshot.interrupt_storage_mtime_ms = Some(current);
-                    snapshot.last_interrupt_cleared_at_ms = Some(now);
-                    snapshot.last_error = None;
+            match source {
+                // During interrupt, an explicit Check should stay usable as a
+                // lightweight probe: if auth is online again, clear the
+                // interrupt even when storage-state itself did not change.
+                CheckSource::Explicit => {
+                    if let Some(current) = current_storage_mtime {
+                        snapshot.interrupt_flag = false;
+                        snapshot.interrupt_reason = None;
+                        snapshot.interrupt_since_ms = None;
+                        snapshot.interrupt_storage_mtime_ms = Some(current);
+                        snapshot.last_interrupt_cleared_at_ms = Some(now);
+                        snapshot.last_error = None;
+                    }
                 }
-                (None, Some(current)) => {
-                    snapshot.interrupt_flag = false;
-                    snapshot.interrupt_reason = None;
-                    snapshot.interrupt_since_ms = None;
-                    snapshot.interrupt_storage_mtime_ms = Some(current);
-                    snapshot.last_interrupt_cleared_at_ms = Some(now);
-                    snapshot.last_error = None;
-                }
-                _ => {}
+                _ => match (snapshot.interrupt_storage_mtime_ms, current_storage_mtime) {
+                    (Some(previous), Some(current)) if current > previous => {
+                        snapshot.interrupt_flag = false;
+                        snapshot.interrupt_reason = None;
+                        snapshot.interrupt_since_ms = None;
+                        snapshot.interrupt_storage_mtime_ms = Some(current);
+                        snapshot.last_interrupt_cleared_at_ms = Some(now);
+                        snapshot.last_error = None;
+                    }
+                    (None, Some(current)) => {
+                        snapshot.interrupt_flag = false;
+                        snapshot.interrupt_reason = None;
+                        snapshot.interrupt_since_ms = None;
+                        snapshot.interrupt_storage_mtime_ms = Some(current);
+                        snapshot.last_interrupt_cleared_at_ms = Some(now);
+                        snapshot.last_error = None;
+                    }
+                    _ => {}
+                },
             }
         });
     }
@@ -656,19 +671,15 @@ impl RuntimeService {
     }
 
     pub async fn run_explicit_check(self: &Arc<Self>) -> Result<RuntimeSnapshot, String> {
-        if self.snapshot().interrupt_flag {
-            return Err(
-                "interrupt flag is set; auth check is blocked until fresh storage state is saved"
-                    .to_string(),
-            );
-        }
-        if self.snapshot().reset_running || self.snapshot().login_running {
+        let snapshot = self.snapshot();
+        if snapshot.reset_running || snapshot.login_running {
             return Err(
                 "auth state is being reset or refreshed; auth check is temporarily blocked"
                     .to_string(),
             );
         }
-        self.run_auth_check(CheckSource::Explicit, true).await?;
+        self.run_auth_check(CheckSource::Explicit, !snapshot.interrupt_flag)
+            .await?;
         Ok(self.snapshot())
     }
 
@@ -688,7 +699,7 @@ impl RuntimeService {
         source: CheckSource,
         auto_recover: bool,
     ) -> Result<ScriptOutput, String> {
-        if !matches!(source, CheckSource::Recovery) && self.snapshot().interrupt_flag {
+        if matches!(source, CheckSource::Scheduled) && self.snapshot().interrupt_flag {
             return Err(
                 "interrupt flag is set; auth check is blocked until fresh storage state is saved"
                     .to_string(),
@@ -772,7 +783,7 @@ impl RuntimeService {
         });
 
         if result.success {
-            self.try_clear_interrupt_after_fresh_storage();
+            self.try_clear_interrupt_after_successful_check(source);
             let collect_started = self.maybe_spawn_collect_if_due();
             if !collect_started {
                 let _ = self.maybe_spawn_db_import_if_due();
@@ -786,7 +797,6 @@ impl RuntimeService {
 
         if auto_recover {
             self.set_interrupt("auth:check failed".to_string());
-            self.run_reset().await?;
             let _ = self.spawn_interrupt_login();
         }
 
