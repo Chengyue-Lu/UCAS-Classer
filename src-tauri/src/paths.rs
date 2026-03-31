@@ -12,6 +12,10 @@ pub fn project_root() -> PathBuf {
         .unwrap_or(manifest_dir)
 }
 
+pub fn default_download_dir() -> PathBuf {
+    project_root()
+}
+
 pub fn storage_state_file() -> PathBuf {
     let primary = data_dir().join("auth").join("storage-state.json");
     if primary.is_file() {

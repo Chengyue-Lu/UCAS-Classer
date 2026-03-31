@@ -134,14 +134,6 @@ function extractAssignmentBlocks(html: string): string[] {
     html.match(/<div\b[^>]*class=["'][^"']*\bulDiv\b[^"']*["'][^>]*>([\s\S]*?)<\/div>\s*<\/div>/i)?.[1] ??
     html
 
-  const lookLiBlocks = Array.from(
-    scopedSection.matchAll(/<li\b[^>]*class=["'][^"']*\blookLi\b[^"']*["'][^>]*>([\s\S]*?)<\/li>/gi),
-  ).map((match) => match[1])
-
-  if (lookLiBlocks.length > 0) {
-    return lookLiBlocks
-  }
-
   return Array.from(scopedSection.matchAll(/<li\b[^>]*>([\s\S]*?)<\/li>/gi))
     .map((match) => match[1])
     .filter((block) => /作业状态|开始时间|截止时间|inspectTask|做作业|查看/.test(block))

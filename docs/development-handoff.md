@@ -145,6 +145,85 @@ cargo check --manifest-path src-tauri/Cargo.toml
 - `ucasclasser-package/` 只维护 package 壳层
 - 打包端系统路径存储约束不能改
 
+### 8.1.1 哪些可以脚本同步
+
+以下内容属于 `runtime-shared`，可通过 `node scripts/sync-package-runtime.mjs --write` 从主仓同步到本地 `ucasclasser-package/`：
+
+- 前端共享层
+  - `src/index.html`
+  - `src/app.js`
+  - `src/styles.css`
+  - `src/app/*`
+- TS 自动化共享层
+  - `automation/request-course-list/*`
+  - `automation/request-collectors/*`
+  - `automation/downloads/*`
+  - `automation/shared/*`
+  - `automation/auth/{browser,check-api,config,login-and-save-sep,open-authenticated-url,paths,reset,utils}.ts`
+  - `shared/runtime-paths.ts`
+- Rust 运行共享层
+  - `src-tauri/src/app_data.rs`
+  - `src-tauri/src/assignment_details.rs`
+  - `src-tauri/src/app_settings.rs`
+  - `src-tauri/src/auth_runtime.rs`
+  - `src-tauri/src/db_import.rs`
+  - `src-tauri/src/downloads.rs`
+  - `src-tauri/src/lib.rs`
+  - `src-tauri/src/reminders.rs`
+
+说明：
+
+- 这些文件默认以主仓为权威，不应先改 package 再反向搬回主仓。
+- 同步前推荐先跑：
+  - `npm run check`
+  - `cargo check --manifest-path src-tauri/Cargo.toml`
+
+### 8.1.2 哪些需要手动同步
+
+以下内容属于 `package-shell`，因为开发端与打包端存在职责差异，需要人工维护，不能依赖同步脚本覆盖：
+
+- package Rust 壳层
+  - `ucasclasser-package/src-tauri/src/main.rs`
+  - `ucasclasser-package/src-tauri/src/paths.rs`
+  - `ucasclasser-package/src-tauri/src/script_runner.rs`
+- package 打包链
+  - `ucasclasser-package/package.json`
+  - `ucasclasser-package/src-tauri/Cargo.toml`
+  - `ucasclasser-package/src-tauri/tauri.conf.json`
+  - `ucasclasser-package/scripts/prepare-runtime.mjs`
+- package 资源与产物边界
+  - `ucasclasser-package/src-tauri/resources/**`
+  - `ucasclasser-package/runtime-dist/**`
+
+这些文件之所以需要手动同步，主要是因为它们承载了开发端没有、但打包端必须保留的差异：
+
+- 系统路径存储约束
+- 打包时的 runtime 资源准备
+- package 端的主窗口 / tray / shell 行为实现
+- 安装包版本号与打包配置
+
+### 8.1.3 同步时的实际建议
+
+推荐顺序：
+
+1. 先在主仓改共享运行层
+2. 执行主仓检查
+3. 运行 `node scripts/sync-package-runtime.mjs --write`
+4. 再人工检查 package 壳层是否需要跟进改动
+5. 在 `ucasclasser-package/` 内重新执行：
+   - `npm run check`
+   - `npm run build:runtime`
+   - `cargo check --manifest-path src-tauri/Cargo.toml`
+
+补充说明：
+
+- `node scripts/sync-package-runtime.mjs --check` 目前仍可能出现少量误报，不能单靠它判断 package 侧不可用。
+- 真正判断同步是否成功，应同时看：
+  - 共享文件是否已实际覆盖
+  - package 端 TS 检查
+  - package 端 Rust 编译
+  - 最终打包结果
+
 ### 8.2 中文文件
 
 - 读取中文文档时按 UTF-8 处理

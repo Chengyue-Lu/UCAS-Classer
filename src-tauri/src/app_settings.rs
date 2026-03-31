@@ -6,7 +6,7 @@ use std::path::{Component, Path};
 
 use serde::{Deserialize, Serialize};
 
-use crate::paths::{app_settings_file, data_dir, project_root};
+use crate::paths::{app_settings_file, data_dir, default_download_dir};
 
 const DEFAULT_AUTH_CHECK_INTERVAL_SECS: u64 = 180 * 60;
 const DEFAULT_COLLECT_INTERVAL_SECS: u64 = 15 * 60;
@@ -36,7 +36,7 @@ pub struct AppSettings {
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
-            download_dir: project_root().display().to_string(),
+            download_dir: default_download_dir().display().to_string(),
             course_scope: "all".to_string(),
             course_download_subdirs: std::collections::BTreeMap::new(),
             pending_full_collect_after_diff: false,
@@ -100,7 +100,7 @@ pub fn persist_runtime_markers(
 fn normalize_settings(settings: &mut AppSettings) {
     let trimmed_download_dir = settings.download_dir.trim();
     settings.download_dir = if trimmed_download_dir.is_empty() {
-        project_root().display().to_string()
+        default_download_dir().display().to_string()
     } else {
         trimmed_download_dir.to_string()
     };
