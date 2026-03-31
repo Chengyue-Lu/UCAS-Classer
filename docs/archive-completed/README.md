@@ -1,6 +1,6 @@
 # 已完成文档归档
 
-更新时间：2026-03-17
+更新时间：2026-03-31
 
 这里放的是“已经完成其阶段职责”的文档，不再作为当前主线文档持续维护。
 
@@ -12,6 +12,8 @@
   - Rust 运行层审计与重构路线
 - `ts-request-audit.md`
   - TS request 主线审计与重构路线
+- `v1.0.1-v1.1.0progress.md`
+  - `1.0.1 -> 1.1.0` 阶段进度
 - `temp.md`
   - 临时 UI 参考片段
 - `temp1.md`
@@ -19,9 +21,9 @@
 
 ## 使用方式
 
-- 这些文档适合在需要追溯“为什么当时这么拆 / 这么收口”时回看。
+- 这些文档适合在需要追溯“为什么当时这样拆 / 为什么这样收口”时回看。
 - 平时接手项目时，优先看：
   - `docs/development-handoff.md`
   - `docs/program-map.md`
-  - `docs/v1.0.1-v1.1.0progress.md`
+  - `docs/v1.1.x-v1.2.0-roadmap.md`
   - `docs/package-runtime-sync.md`

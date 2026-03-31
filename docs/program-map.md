@@ -1,9 +1,9 @@
 # UCAS Classer 程序 Map
 
-更新时间：2026-03-17  
+更新时间：2026-03-31  
 文档定位：当前主程序总图，回答“入口在哪里、数据怎么走、哪些文档还有效、哪些点值得继续收口”。
 
-当前发布基线：`v1.1.0`
+当前发布基线：`v1.1.1`
 
 ## 1. 当前结构总览
 
@@ -82,7 +82,7 @@ flowchart TD
 - `src-tauri/src/auth_runtime.rs`
   - runtime scheduler、auth check、collect、db import 编排
 - `src-tauri/src/app_settings.rs`
-  - 设置持久化
+  - 设置持久化与默认值
 - `src-tauri/src/app_data.rs`
   - 从 SQLite 读 dashboard
 - `src-tauri/src/db_import.rs`
@@ -100,7 +100,7 @@ flowchart TD
 
 - `main.rs` 已不再承载大块壳层实现
 - `desktop_shell.rs` 已成为桌面窗口行为的主边界
-- Rust 层当前主要工作已从“大拆文件”转成“继续压 façade 和命令面”
+- `auth_runtime.rs` 当前要点不再是重构，而是继续收口 auth 失败分类、interrupt 恢复与调度手感
 
 ### 2.3 TS request / automation 层
 
@@ -119,6 +119,7 @@ flowchart TD
 
 - 解析域已经拆成 `request-core / material-parser / notice-parser / assignment-parser`
 - `full-collect.ts` 已更像 orchestration
+- `assignment-parser.ts` 已补上混合作业列表场景
 - `common.ts` 当前只是兼容出口，不应继续变厚
 
 ## 3. 当前关键主线
@@ -128,9 +129,10 @@ flowchart TD
 1. 前端启动
 2. `start_runtime_scheduler`
 3. Rust runtime 先做 `auth:check`
-4. auth 正常则继续 collect；失败则走登录恢复
-5. 启动时固定做一轮 `full`
-6. 后台自动 collect 默认走 `summary`
+4. auth 正常则继续 collect；失败则进入 interrupt / 登录恢复
+5. interrupt 期间允许手动 `check` 作为探测恢复
+6. 启动时固定做一轮 `full`
+7. 后台自动 collect 默认走 `summary`
 
 ### 3.2 数据采集与导库
 
@@ -146,6 +148,7 @@ flowchart TD
 2. Rust 只做规范化和脚本桥接
 3. Node 下载脚本按相对目录落盘
 4. 资料批量下载会保留资料树文件夹层级
+5. package 新安装默认目录为系统 `Downloads\\UCAS Classer`
 
 ### 3.4 作业详情
 
@@ -169,8 +172,9 @@ flowchart TD
 | --- | --- | --- |
 | `docs/development-handoff.md` | 总交接入口 | 当前有效 |
 | `docs/program-map.md` | 程序总图 | 当前有效 |
-| `docs/v1.0.1-v1.1.0progress.md` | 版本进度 | 当前有效 |
+| `docs/v1.1.x-v1.2.0-roadmap.md` | 当前路线 | 当前有效 |
 | `docs/package-runtime-sync.md` | 主仓 / package 同步边界 | 当前有效 |
+| `docs/archive-completed/v1.0.1-v1.1.0progress.md` | 历史版本进度 | 已归档 |
 | `docs/archive-completed/*` | 已完成审计与临时文档 | 已归档 |
 | `docs/archive-plans/*` | 历史计划 | 已归档 |
 
@@ -180,24 +184,29 @@ flowchart TD
 
 - `detail-controller.js` 和 `modal-ui.js` 还可以继续压重复 builder
 - 设置弹窗和详情弹窗还有一部分样板 UI 可以继续抽平
+- 作业详情中的图片与复杂正文还值得再做一轮可读性打磨
 
 ### 5.2 Rust
 
-- `main.rs` 里的 command façade 还能继续压薄
+- `main.rs` 里的 command facade 还能继续压薄
 - `script_runner.rs` 的脚本名协议仍是字符串约定
+- auth 失败分类目前还偏保守，离线恢复与 cookie 失效的边界需要继续观察
 
 ### 5.3 TS
 
 - `full-collect.ts` 里 fingerprint / summary 写出逻辑还能继续收口
+- assignment 详情与列表解析应继续覆盖更多真实课程样本
 - `common.ts` 后续应保持薄兼容层，不再承载实现
 
 ## 6. 当前不要误判的点
 
 - `ucasclasser-package/` 不是主仓权威源码
 - package 打包端必须继续走系统路径存储
+- 登录成功会直接覆写 `storage-state`，不必把“先 reset”当成必要步骤
+- `auth:check` 失败不等于应立即清空本地 cookie
 - 独立图片预览窗口尝试已经回退，不属于当前稳定功能
 - `scripts/sync-package-runtime.mjs --check` 仍可能存在误报，不能单靠它判断同步失败
 
 ## 7. 一句话判断
 
-当前主程序已经进入“结构基本成型，后续按模块继续做减法和打磨体验”的阶段。再做大规模重构的收益已经下降，继续做小而准的收口会更划算。
+当前主程序已经进入“结构基本成型，后续按模块继续做减法和打磨体验”的阶段。`1.1.x` 更适合小步维护，`1.2.0` 适合作为稳定性和体验收口版，而不是重新开一轮大规模改造。

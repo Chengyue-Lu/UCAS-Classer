@@ -1,8 +1,8 @@
 # UCAS Classer 交接文档
 
-更新时间：2026-03-17  
+更新时间：2026-03-31  
 文档定位：当前项目的总交接入口。  
-阅读建议：先看本文，再按需打开 [program-map.md](/d:/lcy/ucasclasser-develop/docs/program-map.md) 和 [v1.0.1-v1.1.0progress.md](/d:/lcy/ucasclasser-develop/docs/v1.0.1-v1.1.0progress.md)。
+阅读建议：先看本文，再按需打开 [program-map.md](/d:/lcy/ucasclasser-develop/docs/program-map.md)、[v1.1.x-v1.2.0-roadmap.md](/d:/lcy/ucasclasser-develop/docs/v1.1.x-v1.2.0-roadmap.md)、[package-runtime-sync.md](/d:/lcy/ucasclasser-develop/docs/package-runtime-sync.md)；历史背景可回看 [archive-completed/v1.0.1-v1.1.0progress.md](/d:/lcy/ucasclasser-develop/docs/archive-completed/v1.0.1-v1.1.0progress.md)。
 
 ## 1. 项目一句话
 
@@ -10,13 +10,34 @@
 
 ## 2. 当前版本状态
 
-- 当前开发 / 打包基线：`v1.1.0`
-- 当前状态：`v1.1.0` 已作为当前发布基线
-- 后续工作重点：发布后体验迭代、稳定性跟踪和局部精修
+- 当前开发 / 打包基线：`v1.1.1`
+- 当前状态：`1.1.1` 属于 `1.1.x` 稳定维护基线
+- 当前工作重点：小步修复、体验精修、打包与登录态稳定性跟踪
 
-## 3. 当前稳定能力
+## 3. 最近一轮有效变更
 
 ### 3.1 登录与运行时
+
+- interrupt 期间允许手动 `check` 继续探测恢复
+- `check` 失败后不再急于 `reset` 本地旧登录态
+- 默认 cookie refresh 间隔已从 `720` 分钟调整为 `1440` 分钟
+- 登录成功后仍由新 `storage-state` 覆写旧状态，不依赖预先清空目录
+
+### 3.2 作业与详情
+
+- 作业详情支持按需抓取与本地缓存
+- 作业列表解析已兼容“同页同时存在 `待做` / `待批阅` / 已提交入口”的课程
+- 已提交作业详情入口与待做作业入口现在会分别保留正确 URL
+
+### 3.3 下载与安装包
+
+- 下载目录支持系统文件夹选择器
+- 课程分目录仍由前端计算 `relativeSubdir`
+- 新安装且没有历史路径时，package 侧默认下载目录改为系统 `Downloads\\UCAS Classer`
+
+## 4. 当前稳定能力
+
+### 4.1 登录与调度
 
 - SEP 登录与 `storage-state` 保存
 - `auth:check` API 化
@@ -26,7 +47,7 @@
 - `summary` 只做粗采探测，不导库
 - `summary` 发现 diff 后，下一次自动 collect 升级为 `full`
 
-### 3.2 数据采集与展示
+### 4.2 数据采集与展示
 
 - 课程列表、模块入口、资料、通知、作业主线均为 request 采集
 - SQLite 导库与 dashboard 展示已稳定
@@ -34,7 +55,7 @@
 - 作业详情已支持“点开按需抓取 + 本地缓存”
 - 新通知 / 新资料 / 新作业的系统提醒已接入桌面端
 
-### 3.3 下载与目录
+### 4.3 下载与目录
 
 - 下载目录支持系统文件夹选择器
 - 支持课程分目录
@@ -43,7 +64,7 @@
 - 资料树中的子文件夹结构会在本地保留
 - 下载状态栏支持 `Waiting / Downloading / Success / Fail`
 
-### 3.4 桌面壳层
+### 4.4 桌面壳层
 
 - 托盘常驻
 - 单实例
@@ -51,7 +72,7 @@
 - dock 收起与边缘展开态会置顶
 - 关闭主窗口后可从托盘恢复
 
-## 4. 当前目录职责
+## 5. 当前目录职责
 
 - `src/`
   - 前端页面与模块化 JS
@@ -78,27 +99,29 @@
   - 本地打包壳层目录
   - 继续走系统路径存储，不是主仓权威源码
 
-## 5. 当前文档体系
+## 6. 当前文档体系
 
-### 5.1 当前有效
+### 6.1 当前有效
 
 - [development-handoff.md](/d:/lcy/ucasclasser-develop/docs/development-handoff.md)
   - 当前交接入口
 - [program-map.md](/d:/lcy/ucasclasser-develop/docs/program-map.md)
   - 主程序地图、入口、调用链、风险点
-- [v1.0.1-v1.1.0progress.md](/d:/lcy/ucasclasser-develop/docs/v1.0.1-v1.1.0progress.md)
-  - 版本进度与下阶段 focus
+- [v1.1.x-v1.2.0-roadmap.md](/d:/lcy/ucasclasser-develop/docs/v1.1.x-v1.2.0-roadmap.md)
+  - `1.1.x` 维护重点与 `1.2.0` 路线
 - [package-runtime-sync.md](/d:/lcy/ucasclasser-develop/docs/package-runtime-sync.md)
   - 主仓与 package 运行层同步规则
 
-### 5.2 已归档
+### 6.2 已归档
 
+- [archive-completed/v1.0.1-v1.1.0progress.md](/d:/lcy/ucasclasser-develop/docs/archive-completed/v1.0.1-v1.1.0progress.md)
+  - `1.0.1 -> 1.1.0` 阶段进度
 - [archive-completed/README.md](/d:/lcy/ucasclasser-develop/docs/archive-completed/README.md)
   - 已完成审计与临时文档索引
 - [archive-plans](/d:/lcy/ucasclasser-develop/docs/archive-plans)
   - 旧计划与历史阶段文档
 
-## 6. 当前常用命令
+## 7. 当前常用命令
 
 ```powershell
 # 开发端
@@ -129,23 +152,24 @@ npm run check
 cargo check --manifest-path src-tauri/Cargo.toml
 ```
 
-## 7. 当前已知边界与风险
+## 8. 当前已知边界与风险
 
 - 打包端仍是“主仓共享运行层 + package 壳层手工维护”的模式，不是完全单仓单入口。
 - `scripts/sync-package-runtime.mjs --check` 仍可能出现少量误报；以实际同步结果和编译结果为准。
+- 登录失败原因目前仍需谨慎区分“cookie 失效”和“临时离线 / 网络异常”；不要轻易把失败等同于应清空本地状态。
 - 自动侧收已经可用，但仍有体验打磨空间，尤其是动画手感和窗口恢复细节。
 - 作业详情第一版已经落地，但详情清洗与图片体验仍有优化空间。
 - 独立图片预览窗口的尝试已回退，当前不属于稳定能力，不要按该方案继续叠改。
 
-## 8. 接手时优先注意
+## 9. 接手时优先注意
 
-### 8.1 开发与打包边界
+### 9.1 开发与打包边界
 
 - 主仓是运行主线唯一权威源码
 - `ucasclasser-package/` 只维护 package 壳层
 - 打包端系统路径存储约束不能改
 
-### 8.1.1 哪些可以脚本同步
+### 9.1.1 哪些可以脚本同步
 
 以下内容属于 `runtime-shared`，可通过 `node scripts/sync-package-runtime.mjs --write` 从主仓同步到本地 `ucasclasser-package/`：
 
@@ -178,7 +202,7 @@ cargo check --manifest-path src-tauri/Cargo.toml
   - `npm run check`
   - `cargo check --manifest-path src-tauri/Cargo.toml`
 
-### 8.1.2 哪些需要手动同步
+### 9.1.2 哪些需要手动同步
 
 以下内容属于 `package-shell`，因为开发端与打包端存在职责差异，需要人工维护，不能依赖同步脚本覆盖：
 
@@ -202,7 +226,7 @@ cargo check --manifest-path src-tauri/Cargo.toml
 - package 端的主窗口 / tray / shell 行为实现
 - 安装包版本号与打包配置
 
-### 8.1.3 同步时的实际建议
+### 9.1.3 同步时的实际建议
 
 推荐顺序：
 
@@ -224,25 +248,22 @@ cargo check --manifest-path src-tauri/Cargo.toml
   - package 端 Rust 编译
   - 最终打包结果
 
-### 8.2 中文文件
+### 9.2 中文文件
 
 - 读取中文文档时按 UTF-8 处理
 - 终端中出现中文乱码时，不要把乱码当成文件真实内容
 
-### 8.3 下载链
+### 9.3 下载链
 
 - 现在统一规则是“前端负责计算最终 `relativeSubdir`，后端只按相对路径落盘”
 - 不要再把课程分目录重复补到 Rust 层
 
-## 9. 下一阶段建议
+## 10. 下一阶段建议
 
-`v1.1.0` 发布后，建议按下面顺序继续：
+- `1.1.x` 继续做小而准的维护修复，优先稳登录态、作业链和提醒链。
+- `1.2.0` 可以作为“稳定性与体验收口版”，而不是重新开一轮大功能扩张。
+- 路线细化见 [v1.1.x-v1.2.0-roadmap.md](/d:/lcy/ucasclasser-develop/docs/v1.1.x-v1.2.0-roadmap.md)。
 
-1. 继续打磨自动侧收、托盘恢复和窗口手感
-2. 精修作业详情内容清洗与图片体验
-3. 持续观察通知 / 资料 / 作业提醒的真实使用反馈
-4. 评估 `1.1.x` 维护修复与下一阶段功能优先级
+## 11. 一句话结论
 
-## 10. 一句话结论
-
-当前项目已经不是“探索期原型”，而是“主线已成型、模块边界已基本清楚、进入收口和发布整理期”的状态。后续工作重点不再是大规模重写，而是围绕体验、稳定性和发布流程继续做减法。
+当前项目已经不是“探索期原型”，而是“主线已成型、模块边界已基本清楚、进入维护收口和发布整理期”的状态。后续工作重点不再是大规模重写，而是围绕体验、稳定性和发布流程继续做减法。
