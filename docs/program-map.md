@@ -172,7 +172,7 @@ flowchart TD
 | --- | --- | --- |
 | `docs/development-handoff.md` | 总交接入口 | 当前有效 |
 | `docs/program-map.md` | 程序总图 | 当前有效 |
-| `docs/v1.1.x-v1.2.0-roadmap.md` | 当前路线 | 当前有效 |
+| `docs/v1.1.x-v1.3.0-roadmap.md` | 当前路线 | 当前有效 |
 | `docs/package-runtime-sync.md` | 主仓 / package 同步边界 | 当前有效 |
 | `docs/archive-completed/v1.0.1-v1.1.0progress.md` | 历史版本进度 | 已归档 |
 | `docs/archive-completed/*` | 已完成审计与临时文档 | 已归档 |
@@ -209,4 +209,4 @@ flowchart TD
 
 ## 7. 一句话判断
 
-当前主程序已经进入“结构基本成型，后续按模块继续做减法和打磨体验”的阶段。`1.1.x` 更适合小步维护，`1.2.0` 适合作为稳定性和体验收口版，而不是重新开一轮大规模改造。
+当前主程序已经进入“结构基本成型，后续按模块继续做减法和打磨体验”的阶段。`1.1.x` 先把作业详情与运行时细节做稳，`1.2.0` 适合作为稳定性和体验收口版，`1.3.0` 再把课表与待办整合进主线。

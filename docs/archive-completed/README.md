@@ -25,5 +25,5 @@
 - 平时接手项目时，优先看：
   - `docs/development-handoff.md`
   - `docs/program-map.md`
-  - `docs/v1.1.x-v1.2.0-roadmap.md`
+  - `docs/v1.1.x-v1.3.0-roadmap.md`
   - `docs/package-runtime-sync.md`

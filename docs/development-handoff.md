@@ -2,7 +2,7 @@
 
 更新时间：2026-03-31  
 文档定位：当前项目的总交接入口。  
-阅读建议：先看本文，再按需打开 [program-map.md](/d:/lcy/ucasclasser-develop/docs/program-map.md)、[v1.1.x-v1.2.0-roadmap.md](/d:/lcy/ucasclasser-develop/docs/v1.1.x-v1.2.0-roadmap.md)、[package-runtime-sync.md](/d:/lcy/ucasclasser-develop/docs/package-runtime-sync.md)；历史背景可回看 [archive-completed/v1.0.1-v1.1.0progress.md](/d:/lcy/ucasclasser-develop/docs/archive-completed/v1.0.1-v1.1.0progress.md)。
+阅读建议：先看本文，再按需打开 [program-map.md](/d:/lcy/ucasclasser-develop/docs/program-map.md)、[v1.1.x-v1.3.0-roadmap.md](/d:/lcy/ucasclasser-develop/docs/v1.1.x-v1.3.0-roadmap.md)、[package-runtime-sync.md](/d:/lcy/ucasclasser-develop/docs/package-runtime-sync.md)；历史背景可回看 [archive-completed/v1.0.1-v1.1.0progress.md](/d:/lcy/ucasclasser-develop/docs/archive-completed/v1.0.1-v1.1.0progress.md)。
 
 ## 1. 项目一句话
 
@@ -107,8 +107,8 @@
   - 当前交接入口
 - [program-map.md](/d:/lcy/ucasclasser-develop/docs/program-map.md)
   - 主程序地图、入口、调用链、风险点
-- [v1.1.x-v1.2.0-roadmap.md](/d:/lcy/ucasclasser-develop/docs/v1.1.x-v1.2.0-roadmap.md)
-  - `1.1.x` 维护重点与 `1.2.0` 路线
+- [v1.1.x-v1.3.0-roadmap.md](/d:/lcy/ucasclasser-develop/docs/v1.1.x-v1.3.0-roadmap.md)
+  - `1.1.x -> 1.3.0` 路线
 - [package-runtime-sync.md](/d:/lcy/ucasclasser-develop/docs/package-runtime-sync.md)
   - 主仓与 package 运行层同步规则
 
@@ -260,9 +260,10 @@ cargo check --manifest-path src-tauri/Cargo.toml
 
 ## 10. 下一阶段建议
 
-- `1.1.x` 继续做小而准的维护修复，优先稳登录态、作业链和提醒链。
-- `1.2.0` 可以作为“稳定性与体验收口版”，而不是重新开一轮大功能扩张。
-- 路线细化见 [v1.1.x-v1.2.0-roadmap.md](/d:/lcy/ucasclasser-develop/docs/v1.1.x-v1.2.0-roadmap.md)。
+- `1.1.x` 继续做小而准的维护修复，作业详情体验是最明确的近期主线。
+- `1.2.0` 可以作为“稳定性与体验收口版”，并加入轻量的自动检测更新能力。
+- `1.3.0` 可以把课表整合进主程序，并围绕课表逐步吸纳待办等时间组织能力。
+- 路线细化见 [v1.1.x-v1.3.0-roadmap.md](/d:/lcy/ucasclasser-develop/docs/v1.1.x-v1.3.0-roadmap.md)。
 
 ## 11. 一句话结论
 
