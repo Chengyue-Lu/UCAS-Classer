@@ -1,9 +1,9 @@
 # UCAS Classer 程序 Map
 
-更新时间：2026-03-31  
+更新时间：2026-04-23  
 文档定位：当前主程序总图，回答“入口在哪里、数据怎么走、哪些文档还有效、哪些点值得继续收口”。
 
-当前发布基线：`v1.1.1`
+当前发布基线：`v1.1.2`
 
 ## 1. 当前结构总览
 
@@ -120,6 +120,7 @@ flowchart TD
 - 解析域已经拆成 `request-core / material-parser / notice-parser / assignment-parser`
 - `full-collect.ts` 已更像 orchestration
 - `assignment-parser.ts` 已补上混合作业列表场景
+- `assignment-parser.ts` 会提取 `workId / workAnswerId`，并优先选择已提交作业可访问的“查看”入口，避免已截止作业详情打开到无权访问 URL
 - `common.ts` 当前只是兼容出口，不应继续变厚
 
 ## 3. 当前关键主线
@@ -153,16 +154,17 @@ flowchart TD
 ### 3.4 作业详情
 
 1. 点开作业详情
-2. 若有缓存且摘要未变，直接读缓存
-3. 否则 TS request 抓取详情页
-4. Rust 写回 `assignment_detail_cache`
-5. 前端显示富文本详情
+2. Rust 将 `courseId / workUrl / workId / workAnswerId` 交给 TS 详情脚本
+3. TS 先 bootstrap 当前作业列表，用稳定身份匹配最新作业项与最新 URL
+4. 若有缓存且摘要未变，直接读缓存；否则抓取详情页并做无权访问兜底
+5. Rust 写回 `assignment_detail_cache`
+6. 前端显示富文本详情，并让“打开作业入口”复用详情链路返回的最新 URL
 
 ### 3.5 提醒
 
 1. full import 成功
 2. Rust 读取 `reminder-state.json`
-3. 对比本轮 notice/material/assignment 是否有新增
+3. 对比本轮 notice/material/assignment 是否有新增；作业优先用 `courseId + workId` 作为稳定身份
 4. 按课程聚合系统提醒
 5. 更新提醒基线
 

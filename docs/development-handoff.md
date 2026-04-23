@@ -1,6 +1,6 @@
 # UCAS Classer 交接文档
 
-更新时间：2026-03-31  
+更新时间：2026-04-23  
 文档定位：当前项目的总交接入口。  
 阅读建议：先看本文，再按需打开 [program-map.md](/d:/lcy/ucasclasser-develop/docs/program-map.md)、[v1.1.x-v1.3.0-roadmap.md](/d:/lcy/ucasclasser-develop/docs/v1.1.x-v1.3.0-roadmap.md)、[package-runtime-sync.md](/d:/lcy/ucasclasser-develop/docs/package-runtime-sync.md)；历史背景可回看 [archive-completed/v1.0.1-v1.1.0progress.md](/d:/lcy/ucasclasser-develop/docs/archive-completed/v1.0.1-v1.1.0progress.md)。
 
@@ -10,9 +10,9 @@
 
 ## 2. 当前版本状态
 
-- 当前开发 / 打包基线：`v1.1.1`
-- 当前状态：`1.1.1` 属于 `1.1.x` 稳定维护基线
-- 当前工作重点：小步修复、体验精修、打包与登录态稳定性跟踪
+- 当前开发 / 打包基线：`v1.1.2`
+- 当前状态：`1.1.2` 属于 `1.1.x` 作业详情与稳定性维护基线
+- 当前工作重点：作业详情稳定打开、附件可见性、提醒语义去重、打包同步与登录态稳定性跟踪
 
 ## 3. 最近一轮有效变更
 
@@ -28,6 +28,10 @@
 - 作业详情支持按需抓取与本地缓存
 - 作业列表解析已兼容“同页同时存在 `待做` / `待批阅` / 已提交入口”的课程
 - 已提交作业详情入口与待做作业入口现在会分别保留正确 URL
+- `1.1.2` 修复已提交且已截止作业从标题入口打开会“无权访问”的问题：列表解析会优先保留可访问的“查看”入口，并在详情打开前用 `workId / workAnswerId` 重新接上最新 URL
+- 作业详情缓存版本已升级，避免旧错误 URL 或旧清洗结果继续命中
+- 已批阅 / 已完成详情页支持更完整正文提取；无法构造真实下载 URL 的附件会至少保留为 `附件：文件名`
+- 作业顶部总览已收敛为 `未交 X / 总 Y`，作业提醒去重改为优先基于 `courseId + workId`
 
 ### 3.3 下载与安装包
 
@@ -139,6 +143,7 @@ npm run collect:all -- --mode summary --concurrency 4
 
 # 作业详情单独抓取
 npm run assignment:detail -- --course-id <id> --work-url <url>
+npm run assignment:detail -- --course-id <id> --work-id <workId> --work-answer-id <workAnswerId> --work-url <url>
 
 # 导库
 npm run runtime:import
@@ -158,7 +163,7 @@ cargo check --manifest-path src-tauri/Cargo.toml
 - `scripts/sync-package-runtime.mjs --check` 仍可能出现少量误报；以实际同步结果和编译结果为准。
 - 登录失败原因目前仍需谨慎区分“cookie 失效”和“临时离线 / 网络异常”；不要轻易把失败等同于应清空本地状态。
 - 自动侧收已经可用，但仍有体验打磨空间，尤其是动画手感和窗口恢复细节。
-- 作业详情第一版已经落地，但详情清洗与图片体验仍有优化空间。
+- 作业详情 `1.1.2` 已修复已截止已提交入口错链问题，但图片体验、真实附件下载链接覆盖率和复杂正文可读性仍有优化空间。
 - 独立图片预览窗口的尝试已回退，当前不属于稳定能力，不要按该方案继续叠改。
 
 ## 9. 接手时优先注意
