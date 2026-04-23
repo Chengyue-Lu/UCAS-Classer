@@ -31,6 +31,102 @@ function getItemTitle(kind, item) {
   return item.title || '未命名条目'
 }
 
+function parseAssignmentTime(value) {
+  if (!value) {
+    return null
+  }
+
+  const normalized = String(value).trim().replace(/\./g, '-').replace(/\//g, '-')
+  const match = normalized.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:\s+(\d{1,2}):(\d{2}))?/)
+  if (!match) {
+    return null
+  }
+
+  const year = Number(match[1])
+  const month = Number(match[2]) - 1
+  const day = Number(match[3])
+  const hour = Number(match[4] ?? 23)
+  const minute = Number(match[5] ?? 59)
+  const date = new Date(year, month, day, hour, minute)
+  return Number.isNaN(date.getTime()) ? null : date
+}
+
+function isAssignmentSubmitted(item) {
+  const status = item.status || ''
+  const rawText = item.rawText || ''
+  if (/待做|已过期/.test(status)) {
+    return false
+  }
+
+  return /待批阅|已完成|已提交|已批阅|查看|分/.test(`${status} ${rawText}`) ||
+    /selectWorkQuestionYiPiYue/i.test(item.workUrl || '')
+}
+
+function getAssignmentState(item, now = new Date()) {
+  const deadline = parseAssignmentTime(item.endTime)
+  const expired = deadline ? deadline.getTime() < now.getTime() : false
+  const submitted = isAssignmentSubmitted(item)
+
+  if (submitted && expired) {
+    return 'submitted-expired'
+  }
+  if (submitted) {
+    return 'submitted-open'
+  }
+  if (expired) {
+    return 'unsubmitted-expired'
+  }
+  return 'unsubmitted-open'
+}
+
+function getAssignmentStateLabel(stateName) {
+  if (stateName === 'submitted-expired') {
+    return '已交截止'
+  }
+  if (stateName === 'submitted-open') {
+    return '已交未截止'
+  }
+  if (stateName === 'unsubmitted-expired') {
+    return '未交截止'
+  }
+  return '未交未截止'
+}
+
+function summarizeAssignments(courses) {
+  const summary = {
+    unsubmittedOpen: 0,
+    submittedOpen: 0,
+    unsubmittedExpired: 0,
+    submittedExpired: 0,
+  }
+
+  courses.forEach((course) => {
+    ;(course.assignments || []).forEach((assignment) => {
+      const stateName = getAssignmentState(assignment)
+      if (stateName === 'submitted-expired') {
+        summary.submittedExpired += 1
+      } else if (stateName === 'submitted-open') {
+        summary.submittedOpen += 1
+      } else if (stateName === 'unsubmitted-expired') {
+        summary.unsubmittedExpired += 1
+      } else {
+        summary.unsubmittedOpen += 1
+      }
+    })
+  })
+
+  summary.unfinished = summary.unsubmittedOpen + summary.submittedOpen + summary.unsubmittedExpired
+  summary.unsubmitted = summary.unsubmittedOpen + summary.unsubmittedExpired
+  summary.total =
+    summary.unsubmittedOpen + summary.submittedOpen + summary.unsubmittedExpired + summary.submittedExpired
+  return summary
+}
+
+function formatAssignmentOverview(courses) {
+  const summary = summarizeAssignments(courses)
+  return `${courses.length} courses · 未交 ${formatCount(summary.unsubmitted)} / 总 ${formatCount(summary.total)}`
+}
+
 export function createCourseRenderer({
   state,
   courseList,
@@ -136,6 +232,12 @@ export function createCourseRenderer({
           button.className = 'module-item-button'
           button.type = 'button'
 
+          if (kind === 'assignments') {
+            const assignmentState = getAssignmentState(item)
+            button.dataset.assignmentState = assignmentState
+            button.title = `${getAssignmentStateLabel(assignmentState)} · ${item.status || '未知状态'}`
+          }
+
           const text = document.createElement('span')
           text.className = 'module-item-button__text'
           text.textContent = getItemTitle(kind, item)
@@ -144,7 +246,15 @@ export function createCourseRenderer({
           arrow.className = 'module-item-button__arrow'
           arrow.textContent = '→'
 
-          button.append(text, arrow)
+          if (kind === 'assignments') {
+            const badge = document.createElement('span')
+            badge.className = 'module-item-button__badge'
+            badge.textContent = item.status || getAssignmentStateLabel(button.dataset.assignmentState)
+            button.append(text, badge, arrow)
+          } else {
+            button.append(text, arrow)
+          }
+
           button.addEventListener('click', (event) => {
             event.stopPropagation()
             openDetailModal(kind, course, item)
@@ -301,7 +411,7 @@ export function createCourseRenderer({
     courseList.replaceChildren()
 
     const courses = getScopedCourses()
-    courseCount.textContent = `${courses.length} courses`
+    courseCount.textContent = formatAssignmentOverview(courses)
     emptyState.hidden = courses.length > 0
 
     courses.forEach((course) => {

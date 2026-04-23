@@ -109,7 +109,7 @@ pub fn sync_post_import_reminders(app: &AppHandle) -> Result<ReminderSyncResult,
 
     notice_items
         .iter()
-        .filter(|item| !state.seen_notice_keys.contains(&item.identity_key))
+        .filter(|item| !item.was_seen_in(&state.seen_notice_keys))
         .for_each(|item| {
             let aggregate = course_aggregates
                 .entry(item.course_id.clone())
@@ -124,7 +124,7 @@ pub fn sync_post_import_reminders(app: &AppHandle) -> Result<ReminderSyncResult,
 
     material_items
         .iter()
-        .filter(|item| !state.seen_material_keys.contains(&item.identity_key))
+        .filter(|item| !item.was_seen_in(&state.seen_material_keys))
         .for_each(|item| {
             let aggregate = course_aggregates
                 .entry(item.course_id.clone())
@@ -139,7 +139,7 @@ pub fn sync_post_import_reminders(app: &AppHandle) -> Result<ReminderSyncResult,
 
     assignment_items
         .iter()
-        .filter(|item| !state.seen_assignment_keys.contains(&item.identity_key))
+        .filter(|item| !item.was_seen_in(&state.seen_assignment_keys))
         .for_each(|item| {
             let aggregate = course_aggregates
                 .entry(item.course_id.clone())
@@ -182,7 +182,18 @@ struct ReminderItem {
     course_id: String,
     course_name: String,
     identity_key: String,
+    legacy_identity_key: Option<String>,
     title: String,
+}
+
+impl ReminderItem {
+    fn was_seen_in(&self, seen_keys: &BTreeSet<String>) -> bool {
+        seen_keys.contains(&self.identity_key)
+            || self
+                .legacy_identity_key
+                .as_ref()
+                .is_some_and(|legacy_key| seen_keys.contains(legacy_key))
+    }
 }
 
 fn load_last_imported_collect_finished_at(
@@ -217,6 +228,7 @@ fn load_notice_items(connection: &Connection) -> Result<Vec<ReminderItem>, Strin
                 course_id: course_id.clone(),
                 course_name: row.get::<_, String>(1)?,
                 identity_key: format!("notice:{course_id}:{notice_id}"),
+                legacy_identity_key: None,
                 title: row.get::<_, String>(3)?,
             })
         })
@@ -246,6 +258,7 @@ fn load_material_items(connection: &Connection) -> Result<Vec<ReminderItem>, Str
                 course_id: course_id.clone(),
                 course_name: row.get::<_, String>(1)?,
                 identity_key: format!("material:{course_id}:{node_id}"),
+                legacy_identity_key: None,
                 title: row.get::<_, String>(3)?,
             })
         })
@@ -256,40 +269,51 @@ fn load_material_items(connection: &Connection) -> Result<Vec<ReminderItem>, Str
 }
 
 fn load_assignment_items(connection: &Connection) -> Result<Vec<ReminderItem>, String> {
-    let mut statement = connection
-        .prepare(
-            "
-            SELECT course_id, course_name, title, work_url, start_time, end_time, raw_text
+    let work_id_expr = if table_column_exists(connection, "assignments", "work_id")? {
+        "work_id"
+    } else {
+        "NULL"
+    };
+    let query = format!(
+        "
+            SELECT course_id, course_name, title, {work_id_expr}, work_url, start_time, end_time, raw_text
             FROM assignments
             ORDER BY course_id, item_index
-            ",
-        )
+            "
+    );
+    let mut statement = connection
+        .prepare(&query)
         .map_err(|error| format!("failed to prepare reminder assignment query: {error}"))?;
 
     let rows = statement
         .query_map([], |row| {
             let course_id = row.get::<_, String>(0)?;
             let title = row.get::<_, String>(2)?;
-            let work_url = row.get::<_, Option<String>>(3)?;
-            let identity_key = work_url
+            let work_id = row.get::<_, Option<String>>(3)?;
+            let work_url = row.get::<_, Option<String>>(4)?;
+            let identity_key = work_id
                 .filter(|value| !value.trim().is_empty())
-                .map(|value| format!("assignment:{course_id}:{value}"))
+                .map(|value| format!("assignment:{course_id}:work:{value}"))
                 .unwrap_or_else(|| {
                     format!(
                         "assignment:{course_id}:{}",
                         serde_json::json!({
                             "title": title,
-                            "startTime": row.get::<_, Option<String>>(4).ok().flatten(),
-                            "endTime": row.get::<_, Option<String>>(5).ok().flatten(),
-                            "rawText": row.get::<_, String>(6).unwrap_or_default(),
+                            "startTime": row.get::<_, Option<String>>(5).ok().flatten(),
+                            "endTime": row.get::<_, Option<String>>(6).ok().flatten(),
+                            "rawText": row.get::<_, String>(7).unwrap_or_default(),
                         })
                     )
                 });
+            let legacy_identity_key = work_url
+                .filter(|value| !value.trim().is_empty())
+                .map(|value| format!("assignment:{course_id}:{value}"));
 
             Ok(ReminderItem {
                 course_id,
                 course_name: row.get::<_, String>(1)?,
                 identity_key,
+                legacy_identity_key,
                 title,
             })
         })
@@ -297,6 +321,32 @@ fn load_assignment_items(connection: &Connection) -> Result<Vec<ReminderItem>, S
 
     rows.collect::<Result<Vec<_>, _>>()
         .map_err(|error| format!("failed to read reminder assignments: {error}"))
+}
+
+fn table_column_exists(
+    connection: &Connection,
+    table_name: &str,
+    column_name: &str,
+) -> Result<bool, String> {
+    let pragma = format!("PRAGMA table_info({table_name})");
+    let mut statement = connection
+        .prepare(&pragma)
+        .map_err(|error| format!("failed to prepare reminder column info query: {error}"))?;
+    let rows = statement
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|error| {
+            format!("failed to query reminder column info for `{table_name}`: {error}")
+        })?;
+
+    for row in rows {
+        if row.map_err(|error| format!("failed to read reminder column info: {error}"))?
+            == column_name
+        {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
 }
 
 fn build_notification_body(aggregate: &ReminderCourseAggregate) -> String {

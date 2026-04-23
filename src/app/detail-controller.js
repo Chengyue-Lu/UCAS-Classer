@@ -61,6 +61,8 @@ export function createDetailController({
       courseId: course.courseId,
       assignmentsUrl: course.assignmentsUrl || null,
       workUrl: item.workUrl,
+      workId: item.workId || null,
+      workAnswerId: item.workAnswerId || null,
       title: item.title || '',
       status: item.status || null,
       startTime: item.startTime || null,
@@ -69,7 +71,7 @@ export function createDetailController({
     }
   }
 
-function startAssignmentDetailLoad(course, item, detailContent, linkContent) {
+function startAssignmentDetailLoad(course, item, detailContent, linkContent, onDetailLoaded) {
     const token = ++assignmentLoadToken
     detailContent.content.replaceChildren(createTextBlock('正在加载作业详情...'))
     renderAssignmentLinks(linkContent.content, [])
@@ -95,6 +97,7 @@ function startAssignmentDetailLoad(course, item, detailContent, linkContent) {
           linkContent.section.hidden = true
           renderAssignmentLinks(linkContent.content, [])
         }
+        onDetailLoaded?.(detail)
       })
       .catch((error) => {
         if (token !== assignmentLoadToken || !state.modalOpen || state.modalType !== 'assignments') {
@@ -205,20 +208,24 @@ function startAssignmentDetailLoad(course, item, detailContent, linkContent) {
       )
 
       if (item.workUrl) {
+        let latestAssignmentUrl = item.workUrl
         const detailContent = createMutableDetailSection('详情', createTextBlock('正在加载作业详情...'))
         const linkContent = createMutableDetailSection('页面链接', createTextBlock(''))
         linkContent.section.hidden = true
+        const handleAssignmentDetailLoaded = (detail) => {
+          latestAssignmentUrl = detail.workUrl || detail.finalUrl || latestAssignmentUrl
+        }
 
         modalActions.append(
           createDetailAction('重新加载详情', () => {
-            startAssignmentDetailLoad(course, item, detailContent, linkContent)
+            startAssignmentDetailLoad(course, item, detailContent, linkContent, handleAssignmentDetailLoaded)
           }),
           createDetailAction('打开作业入口', () => {
-            openAuthenticatedUrl(item.workUrl)
+            openAuthenticatedUrl(latestAssignmentUrl)
           }),
         )
 
-        startAssignmentDetailLoad(course, item, detailContent, linkContent)
+        startAssignmentDetailLoad(course, item, detailContent, linkContent, handleAssignmentDetailLoaded)
       } else {
         appendDetailSection(modalBody, '详情', createTextBlock(item.rawText || ''))
       }

@@ -175,6 +175,8 @@ struct AssignmentRecord {
     start_time: Option<String>,
     end_time: Option<String>,
     raw_text: String,
+    work_id: Option<String>,
+    work_answer_id: Option<String>,
 }
 
 pub fn latest_collect_finished_at() -> Result<Option<String>, String> {
@@ -489,6 +491,8 @@ fn init_schema(connection: &Connection) -> Result<(), String> {
                 start_time TEXT,
                 end_time TEXT,
                 raw_text TEXT NOT NULL,
+                work_id TEXT,
+                work_answer_id TEXT,
                 collected_at TEXT NOT NULL
             );
             ",
@@ -500,6 +504,18 @@ fn init_schema(connection: &Connection) -> Result<(), String> {
         "courses",
         "term_category",
         "ALTER TABLE courses ADD COLUMN term_category TEXT",
+    )?;
+    ensure_column(
+        connection,
+        "assignments",
+        "work_id",
+        "ALTER TABLE assignments ADD COLUMN work_id TEXT",
+    )?;
+    ensure_column(
+        connection,
+        "assignments",
+        "work_answer_id",
+        "ALTER TABLE assignments ADD COLUMN work_answer_id TEXT",
     )?;
 
     Ok(())
@@ -769,12 +785,14 @@ fn insert_assignments(
                     item_index,
                     title,
                     work_url,
-                    status,
-                    start_time,
-                    end_time,
-                    raw_text,
-                    collected_at
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                status,
+                start_time,
+                end_time,
+                raw_text,
+                work_id,
+                work_answer_id,
+                collected_at
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
                 params![
                     snapshot.course_id,
                     snapshot.course_name,
@@ -785,6 +803,8 @@ fn insert_assignments(
                     item.start_time,
                     item.end_time,
                     item.raw_text,
+                    item.work_id,
+                    item.work_answer_id,
                     snapshot.collected_at,
                 ],
             )

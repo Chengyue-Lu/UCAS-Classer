@@ -3,6 +3,8 @@ import { fetchAssignmentDetail } from './assignment-detail.js'
 type CliOptions = {
   workUrl: string
   assignmentsUrl: string | null
+  workId: string | null
+  workAnswerId: string | null
   title: string | null
   startTime: string | null
   endTime: string | null
@@ -27,6 +29,8 @@ function parseArgs(argv: string[]): CliOptions {
   return {
     workUrl,
     assignmentsUrl: parseOptionalValue(argv, '--assignments-url'),
+    workId: parseOptionalValue(argv, '--work-id'),
+    workAnswerId: parseOptionalValue(argv, '--work-answer-id'),
     title: parseOptionalValue(argv, '--title'),
     startTime: parseOptionalValue(argv, '--start-time'),
     endTime: parseOptionalValue(argv, '--end-time'),

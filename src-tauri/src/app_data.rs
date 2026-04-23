@@ -71,6 +71,8 @@ pub struct DashboardAssignment {
     pub start_time: Option<String>,
     pub end_time: Option<String>,
     pub work_url: Option<String>,
+    pub work_id: Option<String>,
+    pub work_answer_id: Option<String>,
     pub raw_text: String,
 }
 
@@ -363,21 +365,34 @@ fn load_course_assignments(
     connection: &Connection,
     course_id: &str,
 ) -> Result<Vec<DashboardAssignment>, String> {
-    let mut statement = connection
-        .prepare(
-            "
+    let work_id_expr = if table_column_exists(connection, "assignments", "work_id")? {
+        "work_id"
+    } else {
+        "NULL"
+    };
+    let work_answer_id_expr = if table_column_exists(connection, "assignments", "work_answer_id")? {
+        "work_answer_id"
+    } else {
+        "NULL"
+    };
+    let query = format!(
+        "
             SELECT
               title,
               status,
               start_time,
               end_time,
               work_url,
+              {work_id_expr},
+              {work_answer_id_expr},
               raw_text
             FROM assignments
             WHERE course_id = ?1
             ORDER BY item_index ASC
-            ",
-        )
+            "
+    );
+    let mut statement = connection
+        .prepare(&query)
         .map_err(|error| format!("failed to prepare assignments query: {error}"))?;
 
     let rows = statement
@@ -388,7 +403,9 @@ fn load_course_assignments(
                 start_time: row.get::<_, Option<String>>(2)?,
                 end_time: row.get::<_, Option<String>>(3)?,
                 work_url: row.get::<_, Option<String>>(4)?,
-                raw_text: row.get::<_, String>(5)?,
+                work_id: row.get::<_, Option<String>>(5)?,
+                work_answer_id: row.get::<_, Option<String>>(6)?,
+                raw_text: row.get::<_, String>(7)?,
             })
         })
         .map_err(|error| {
@@ -447,6 +464,28 @@ fn table_exists(connection: &Connection, table_name: &str) -> Result<bool, Strin
     statement
         .query_row(params![table_name], |row| row.get::<_, bool>(0))
         .map_err(|error| format!("failed to query table existence for `{table_name}`: {error}"))
+}
+
+fn table_column_exists(
+    connection: &Connection,
+    table_name: &str,
+    column_name: &str,
+) -> Result<bool, String> {
+    let pragma = format!("PRAGMA table_info({table_name})");
+    let mut statement = connection
+        .prepare(&pragma)
+        .map_err(|error| format!("failed to prepare column info query: {error}"))?;
+    let rows = statement
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|error| format!("failed to query column info for `{table_name}`: {error}"))?;
+
+    for row in rows {
+        if row.map_err(|error| format!("failed to read column info: {error}"))? == column_name {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
 }
 
 fn now_ms() -> u64 {

@@ -25,12 +25,7 @@ export function extractAssignments(html: string, baseUrl: string): AssignmentSum
         /class=["'][^"']*\binspectTask\b[^"']*["'][^>]*\bdata=["']([^"']+)["'][^>]*\bdata2=["']([^"']+)["']/i,
       )
       const directWorkUrl =
-        resolveUrl(
-          block.match(/<a[^>]*href=["']([^"']*\/work\/[^"']+)["'][^>]*title=["'][^"']*["']/i)?.[1] ??
-            block.match(/<a[^>]*class=["'][^"']*\bBtn_(?:blue|red)_1\b[^"']*["'][^>]*href=["']([^"']+)["']/i)?.[1] ??
-            null,
-          baseUrl,
-        ) ??
+        pickAssignmentWorkUrl(block, baseUrl) ??
         buildInspectTaskUrl({
           baseUrl,
           courseId,
@@ -49,6 +44,7 @@ export function extractAssignments(html: string, baseUrl: string): AssignmentSum
       const dateMatches =
         rawText.match(/\d{4}[-/.]\d{1,2}[-/.]\d{1,2}(?:\s+\d{1,2}:\d{2})?/g) ?? []
       const status = normalizeText(block.match(/<strong>([\s\S]*?)<\/strong>/i)?.[1])
+      const directWorkIdentity = directWorkUrl ? extractWorkIdentity(directWorkUrl) : null
 
       return {
         title: title || rawText,
@@ -57,12 +53,65 @@ export function extractAssignments(html: string, baseUrl: string): AssignmentSum
         startTime: dateMatches[0] ?? null,
         endTime: dateMatches[1] ?? null,
         rawText,
-        workId: inspectTaskMatch?.[1] ?? null,
-        workAnswerId: inspectTaskMatch?.[2] ?? null,
+        workId: inspectTaskMatch?.[1] ?? directWorkIdentity?.workId ?? null,
+        workAnswerId: inspectTaskMatch?.[2] ?? directWorkIdentity?.workAnswerId ?? null,
         reEdit: block.match(/\bdata3=["']([^"']+)["']/i)?.[1] ?? null,
       }
     })
     .filter((item) => Boolean(item.title && item.rawText))
+}
+
+function pickAssignmentWorkUrl(block: string, baseUrl: string): string | null {
+  const candidates = Array.from(block.matchAll(/<a\b([^>]*)>/gi))
+    .map((match) => {
+      const attrs = match[1]
+      const url = resolveUrl(attrs.match(/\bhref=(["'])([\s\S]*?)\1/i)?.[2] ?? null, baseUrl)
+      return {
+        attrs,
+        url,
+      }
+    })
+    .filter((candidate): candidate is { attrs: string; url: string } =>
+      Boolean(candidate.url && /\/work\//i.test(candidate.url)),
+    )
+    .sort((left, right) => scoreAssignmentWorkUrl(right) - scoreAssignmentWorkUrl(left))
+
+  return candidates[0]?.url ?? null
+}
+
+function scoreAssignmentWorkUrl(candidate: { attrs: string; url: string }): number {
+  let score = 0
+  if (/\/selectWorkQuestionYiPiYue\b/i.test(candidate.url)) {
+    score += 30
+  }
+  if (/\/doHomeWorkNew\b/i.test(candidate.url)) {
+    score += 10
+  }
+  if (/[?&]evaluation=0\b/i.test(candidate.url)) {
+    score += 20
+  }
+  if (/\bBtn_(?:blue|red)_1\b/i.test(candidate.attrs)) {
+    score += 15
+  }
+  return score
+}
+
+function extractWorkIdentity(workUrl: string): {
+  workId: string | null
+  workAnswerId: string | null
+} {
+  try {
+    const url = new URL(workUrl)
+    return {
+      workId: url.searchParams.get('workId'),
+      workAnswerId: url.searchParams.get('workAnswerId'),
+    }
+  } catch {
+    return {
+      workId: null,
+      workAnswerId: null,
+    }
+  }
 }
 
 type AssignmentLaunchTemplate = {

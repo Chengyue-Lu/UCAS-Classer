@@ -12,7 +12,7 @@ use tokio::task::spawn_blocking;
 use crate::paths::{data_dir, database_file};
 use crate::script_runner::{run_hidden_script, ScriptOutput};
 
-const ASSIGNMENT_DETAIL_CACHE_VERSION: u32 = 2;
+const ASSIGNMENT_DETAIL_CACHE_VERSION: u32 = 4;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -20,6 +20,8 @@ pub struct AssignmentDetailRequest {
     pub course_id: String,
     pub assignments_url: Option<String>,
     pub work_url: String,
+    pub work_id: Option<String>,
+    pub work_answer_id: Option<String>,
     pub title: String,
     pub status: Option<String>,
     pub start_time: Option<String>,
@@ -94,6 +96,26 @@ pub async fn load_assignment_detail(
         {
             owned_args.push("--assignments-url".to_string());
             owned_args.push(assignments_url.to_string());
+        }
+
+        if let Some(work_id) = request
+            .work_id
+            .as_ref()
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+        {
+            owned_args.push("--work-id".to_string());
+            owned_args.push(work_id.to_string());
+        }
+
+        if let Some(work_answer_id) = request
+            .work_answer_id
+            .as_ref()
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+        {
+            owned_args.push("--work-answer-id".to_string());
+            owned_args.push(work_answer_id.to_string());
         }
 
         if let Some(start_time) = request
@@ -311,6 +333,8 @@ fn build_summary_fingerprint(request: &AssignmentDetailRequest) -> String {
         "startTime": request.start_time,
         "endTime": request.end_time,
         "rawText": request.raw_text,
+        "workId": request.work_id,
+        "workAnswerId": request.work_answer_id,
         "workUrl": request.work_url,
     })
     .to_string()
