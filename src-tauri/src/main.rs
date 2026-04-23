@@ -183,8 +183,40 @@ async fn run_db_import(
 }
 
 #[tauri::command]
-fn open_authenticated_url(url: String) -> Result<(), String> {
-    let child = spawn_hidden_background_script("auth:open-url", &["--url", &url])?;
+fn open_authenticated_url(
+    url: String,
+    assignments_url: Option<String>,
+    work_id: Option<String>,
+    work_answer_id: Option<String>,
+) -> Result<(), String> {
+    let mut owned_args = vec!["--url".to_string(), url];
+    if let Some(assignments_url) = assignments_url
+        .as_ref()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+    {
+        owned_args.push("--assignments-url".to_string());
+        owned_args.push(assignments_url.to_string());
+    }
+    if let Some(work_id) = work_id
+        .as_ref()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+    {
+        owned_args.push("--work-id".to_string());
+        owned_args.push(work_id.to_string());
+    }
+    if let Some(work_answer_id) = work_answer_id
+        .as_ref()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+    {
+        owned_args.push("--work-answer-id".to_string());
+        owned_args.push(work_answer_id.to_string());
+    }
+
+    let borrowed_args = owned_args.iter().map(String::as_str).collect::<Vec<_>>();
+    let child = spawn_hidden_background_script("auth:open-url", &borrowed_args)?;
     let _ = child.id();
     Ok(())
 }

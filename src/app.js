@@ -339,13 +339,13 @@ async function openExternalUrl(url) {
   }
 }
 
-async function openAuthenticatedUrl(url) {
+async function openAuthenticatedUrl(url, options = {}) {
   if (!url) {
     return
   }
 
   try {
-    const result = await invokeTauriCommand('open_authenticated_url', { url })
+    const result = await invokeTauriCommand('open_authenticated_url', { url, ...options })
     if (result === null) {
       window.open(url, '_blank', 'noopener,noreferrer')
     }

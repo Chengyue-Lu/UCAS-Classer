@@ -213,7 +213,7 @@ function startAssignmentDetailLoad(course, item, detailContent, linkContent, onD
         const linkContent = createMutableDetailSection('页面链接', createTextBlock(''))
         linkContent.section.hidden = true
         const handleAssignmentDetailLoaded = (detail) => {
-          latestAssignmentUrl = detail.workUrl || detail.finalUrl || latestAssignmentUrl
+          latestAssignmentUrl = detail.finalUrl || detail.workUrl || latestAssignmentUrl
         }
 
         modalActions.append(
@@ -221,7 +221,11 @@ function startAssignmentDetailLoad(course, item, detailContent, linkContent, onD
             startAssignmentDetailLoad(course, item, detailContent, linkContent, handleAssignmentDetailLoaded)
           }),
           createDetailAction('打开作业入口', () => {
-            openAuthenticatedUrl(latestAssignmentUrl)
+            openAuthenticatedUrl(latestAssignmentUrl, {
+              assignmentsUrl: course.assignmentsUrl || null,
+              workId: item.workId || null,
+              workAnswerId: item.workAnswerId || null,
+            })
           }),
         )
 

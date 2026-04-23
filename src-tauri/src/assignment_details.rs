@@ -12,7 +12,7 @@ use tokio::task::spawn_blocking;
 use crate::paths::{data_dir, database_file};
 use crate::script_runner::{run_hidden_script, ScriptOutput};
 
-const ASSIGNMENT_DETAIL_CACHE_VERSION: u32 = 4;
+const ASSIGNMENT_DETAIL_CACHE_VERSION: u32 = 5;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -229,7 +229,7 @@ fn load_cached_assignment_detail(
             )?;
 
             Ok(Some(AssignmentDetailResponse {
-                work_url: work_url.to_string(),
+                work_url: final_url.clone(),
                 final_url,
                 detail_text,
                 detail_html,
