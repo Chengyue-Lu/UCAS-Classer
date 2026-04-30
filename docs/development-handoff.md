@@ -169,9 +169,10 @@ cargo check --manifest-path src-tauri/Cargo.toml
 
 # package 发布辅助
 cd ucasclasser-package
-$env:TAURI_SIGNING_PRIVATE_KEY_PATH="..\temp\ucas-classer-updater.key"
 npm run tauri:build
-npm run release:manifest
+cd ..
+npx tauri signer sign --private-key-path (Resolve-Path "temp\ucas-classer-updater.key").Path --password= "ucasclasser-package\src-tauri\target\release\bundle\nsis\UCAS Classer_1.2.0_x64-setup.exe"
+node scripts/generate-update-manifest.mjs --package-root=ucasclasser-package
 ```
 
 ## 8. 当前已知边界与风险

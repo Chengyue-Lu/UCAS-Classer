@@ -99,14 +99,17 @@ npm run check
 npm run build:runtime
 cargo check --manifest-path src-tauri/Cargo.toml
 npm run tauri:build
-npm run release:manifest
 ```
 
 自动更新发布注意：
 
-- `1.2.0` 起打包时需要设置 `TAURI_SIGNING_PRIVATE_KEY_PATH` 或 `TAURI_SIGNING_PRIVATE_KEY`
+- `1.2.0` 起需要对 NSIS 安装包签名后生成 `latest.json`
 - 私钥不要提交，当前本机建议放在被忽略的 `temp/` 目录
-- GitHub Release 需要上传 updater 包、签名和 `latest.json`
+- GitHub Release 需要上传 NSIS 安装包、对应 `.sig` 和 `latest.json`
+- 如果 `tauri build` 在自动签名阶段卡住，使用主仓命令手动签名：
+  `npx tauri signer sign --private-key-path (Resolve-Path "temp\ucas-classer-updater.key").Path --password= "ucasclasser-package\src-tauri\target\release\bundle\nsis\UCAS Classer_1.2.0_x64-setup.exe"`
+- 生成 manifest：
+  `node scripts/generate-update-manifest.mjs --package-root=ucasclasser-package`
 
 ## 7. 当前已知边界
 

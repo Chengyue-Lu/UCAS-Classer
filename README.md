@@ -70,8 +70,16 @@ cd ucasclasser-package
 npm run check
 cargo check --manifest-path src-tauri/Cargo.toml
 npm run tauri:build
-npm run release:manifest
+cd ..
+npx tauri signer sign --private-key-path (Resolve-Path "temp\ucas-classer-updater.key").Path --password= "ucasclasser-package\src-tauri\target\release\bundle\nsis\UCAS Classer_1.2.0_x64-setup.exe"
+node scripts/generate-update-manifest.mjs --package-root=ucasclasser-package
 ```
+
+## 自动更新发布提示
+
+`1.2.0` 之前的版本不包含 updater，需要用户手动安装一次 `1.2.0`。从 `1.2.0` 开始，只要后续 release 使用同一把 updater 私钥签名，并上传 NSIS 安装包、对应 `.sig` 和 `latest.json`，应用即可自动检测并提示安装新版本。
+
+发布时不要提交 updater 私钥；本地私钥默认放在被忽略的 `temp/` 目录。打包时将 `TAURI_SIGNING_PRIVATE_KEY` 设置为私钥文件路径或私钥内容。
 
 ## 使用说明
 
