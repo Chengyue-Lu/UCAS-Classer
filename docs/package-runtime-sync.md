@@ -1,6 +1,6 @@
 # 打包端运行层同步说明
 
-更新时间：2026-03-17  
+更新时间：2026-04-30  
 文档定位：说明主仓运行层与本地 `ucasclasser-package/` 的同步边界。
 
 ## 1. 基本原则
@@ -27,6 +27,7 @@ node scripts/sync-package-runtime.mjs --write
 - `shared/runtime-paths.ts`
 - `automation/auth/{browser,check-api,config,login-and-save-sep,open-authenticated-url,paths,reset,utils}.ts`
 - `src-tauri/src/app_data.rs`
+- `src-tauri/src/app_release.rs`
 - `src-tauri/src/assignment_details.rs`
 - `src-tauri/src/app_settings.rs`
 - `src-tauri/src/auth_runtime.rs`
@@ -51,6 +52,7 @@ node scripts/sync-package-runtime.mjs --write
 - `ucasclasser-package/src-tauri/src/paths.rs`
 - `ucasclasser-package/src-tauri/src/script_runner.rs`
 - `ucasclasser-package/scripts/prepare-runtime.mjs`
+- `ucasclasser-package/scripts/generate-update-manifest.mjs`
 - `ucasclasser-package/package.json`
 - `ucasclasser-package/src-tauri/resources/**`
 - `ucasclasser-package/runtime-dist/**`
@@ -58,6 +60,7 @@ node scripts/sync-package-runtime.mjs --write
 说明：
 
 - 自动侧收、tray、系统路径解析都属于 package 壳层的一部分
+- updater 插件初始化、安装包版本号、签名配置和 release manifest 生成属于 package 发布链路，需要人工复核
 - 不要把 package 壳层逻辑反向当成主仓权威版本
 
 ## 5. 当前 `debug/archive`
@@ -95,7 +98,15 @@ package 端：
 npm run check
 npm run build:runtime
 cargo check --manifest-path src-tauri/Cargo.toml
+npm run tauri:build
+npm run release:manifest
 ```
+
+自动更新发布注意：
+
+- `1.2.0` 起打包时需要设置 `TAURI_SIGNING_PRIVATE_KEY_PATH` 或 `TAURI_SIGNING_PRIVATE_KEY`
+- 私钥不要提交，当前本机建议放在被忽略的 `temp/` 目录
+- GitHub Release 需要上传 updater 包、签名和 `latest.json`
 
 ## 7. 当前已知边界
 

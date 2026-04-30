@@ -17,6 +17,12 @@ use desktop_shell::{
 };
 use tauri::{AppHandle, Manager, RunEvent, State};
 use ucas_classer::app_data::{load_dashboard_data as load_dashboard_data_impl, DashboardData};
+use ucas_classer::app_release::{
+    check_app_update as check_app_update_impl, get_app_release_state as get_app_release_state_impl,
+    install_app_update as install_app_update_impl,
+    mark_app_version_seen as mark_app_version_seen_impl, AppReleaseState, AppUpdateCheckResult,
+    AppUpdateInstallResult,
+};
 use ucas_classer::app_settings::{
     load_app_settings as load_app_settings_impl, save_app_settings as save_app_settings_impl,
     AppSettings,
@@ -258,6 +264,26 @@ async fn load_assignment_detail(
 }
 
 #[tauri::command]
+fn get_app_release_state() -> Result<AppReleaseState, String> {
+    get_app_release_state_impl()
+}
+
+#[tauri::command]
+async fn check_app_update(app: AppHandle) -> Result<AppUpdateCheckResult, String> {
+    check_app_update_impl(app).await
+}
+
+#[tauri::command]
+async fn install_app_update(app: AppHandle) -> Result<AppUpdateInstallResult, String> {
+    install_app_update_impl(app).await
+}
+
+#[tauri::command]
+fn mark_app_version_seen() -> Result<AppReleaseState, String> {
+    mark_app_version_seen_impl()
+}
+
+#[tauri::command]
 fn sync_post_import_reminders(app: tauri::AppHandle) -> Result<ReminderSyncResult, String> {
     let result = sync_post_import_reminders_impl(&app)?;
     publish_content_unread_state(&app, result.unread_count)?;
@@ -287,6 +313,7 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(RuntimeService::new())
         .manage(ExitGuard(AtomicBool::new(false)))
         .manage(DockManager::default())
@@ -329,6 +356,10 @@ fn main() {
             download_protected_file,
             download_protected_files,
             load_assignment_detail,
+            get_app_release_state,
+            check_app_update,
+            install_app_update,
+            mark_app_version_seen,
             sync_post_import_reminders,
             mark_content_item_viewed,
             mark_all_content_viewed,

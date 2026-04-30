@@ -2,7 +2,7 @@
 
 <div align="center">
   <h2>
-    <img src=".\src-tauri\icons\UCAS Classer.square.png" alt="UCAS Classer Logo" width="30" style="vertical-align: middle; margin-right: 15px;">
+    <img src="./src-tauri/icons/UCAS Classer.square.png" alt="UCAS Classer Logo" width="30" style="vertical-align: middle; margin-right: 15px;">
     <span style="font-family: 'Helvetica Neue', Helvetica, 'PingFang SC', 'Microsoft YaHei', sans-serif; font-weight: 800; font-size: 40px; vertical-align: middle;">UCAS Classer</span>
   </h2>
 
@@ -11,42 +11,67 @@
   <p>
     <img src="https://img.shields.io/badge/Platform-Windows-0078D6?logo=windows&logoColor=white" alt="Platform" />
     <img src="https://img.shields.io/badge/Tauri-App-FFC131?logo=tauri&logoColor=white" alt="Tauri" />
+    <img src="https://img.shields.io/badge/Baseline-1.2.0-2f855a" alt="Baseline" />
   </p>
 
-  <p><em>它的目标很简单：更快地看见课程、通知、资料和作业，把常用操作收进一个更顺手的小界面里。 ✨</em></p>
+  <p><em>更快看到课程、通知、资料和作业，把常用操作收进一个更顺手的小界面。</em></p>
 </div>
-<br/>
 
-## 这个项目在做什么
+## 项目目标
 
-- 📚 聚合课程、通知、资料、作业
-- 🔐 复用登录态，减少重复登录
-- ⚡ 尽量用 API / request 路线完成刷新与采集
-- 💾 本地落库，方便前端直接展示和后续扩展
-- 📦 最终交付为可安装的桌面应用
+- 聚合课程、通知、资料和作业信息。
+- 复用登录态，减少重复登录。
+- 尽量使用 request/API 路线完成刷新与采集。
+- 使用本地 SQLite 支撑 dashboard、未读红点、作业详情缓存和后续扩展。
+- 交付为 Windows 可安装桌面应用。
 
-## 当前进度
+## 当前能力
 
-- ✅ 登录保存已切到 SEP 入口，`auth:check` 已改为 API 检查
-- ✅ 课程列表、模块入口、通知 / 资料 / 作业采集主线已切到 request-driven
-- ✅ 自动 collect 已拆成 `summary / full`
-- ✅ 下载目录选择、课程分目录、资料批量下载已完成
-- ✅ 作业详情已支持“点开按需抓取 + 本地缓存”
-- ✅ 系统提醒已支持新通知 / 新资料 / 新作业按课程聚合提醒
-- ✅ 桌面端已具备托盘常驻、单实例、自动侧收 MVP、启动自动 `check + full collect`
-- ✅ `v1.1.0` 已作为当前发布基线
-- 🚧 当前主要工作转向：体验打磨、稳定性跟踪、后续小版本维护
+- 登录态保存与 `auth:check` API 校验。
+- 启动自动 `check + full collect`，后台 collect 支持 `summary / full`。
+- 课程列表、模块入口、通知、资料、作业主线已切到 request-driven。
+- 作业详情支持点开按需抓取、本地缓存、已提交/已截止入口修正。
+- 通知、资料、作业支持系统提醒和应用内未读红点。
+- 下载目录选择、课程分目录、资料批量下载。
+- 托盘常驻、单实例、自动侧收 MVP。
+- `1.2.0` 起接入 GitHub Release 自动更新检测，用户确认后下载并安装。
 
-## 仓库提示
+## 版本状态
 
-- `automation/`：认证、采集、下载脚本
-- `src-tauri/`：桌面端后端、运行时调度与数据库导入逻辑
-- `src/`：当前桌面前端
-- `docs/development-handoff.md`：当前交接入口
-- `docs/program-map.md`：当前主线、入口、调用链与边界总图
-- `docs/v1.0.1-v1.1.0progress.md`：版本进度
-- `docs/archive-completed/`：已完成审计与临时文档归档
-- `docs/archive-plans/`：历史计划与阶段文档
+- 当前发布基线：`1.2.0`
+- `1.1.x` 主线：作业详情与稳定性维护。
+- `1.2.0` 主线：自动更新、应用内版本提醒、发布流程收口。
+- `1.3.0` 规划：课表与待办整合。
+
+## 仓库结构
+
+- `automation/`：认证、采集、下载脚本。
+- `src/`：桌面端前端页面与模块化 JS。
+- `src-tauri/`：开发端 Rust 后端、调度、数据库导入和 Tauri command。
+- `docs/development-handoff.md`：当前交接入口。
+- `docs/program-map.md`：主程序地图、入口、调用链与风险点。
+- `docs/package-runtime-sync.md`：主仓与 package 运行层同步规则。
+- `ucasclasser-package/`：本地打包壳层目录，保留 package 侧差异。
+
+## 常用命令
+
+```powershell
+npm run check
+cargo check --manifest-path src-tauri/Cargo.toml
+
+node scripts/sync-package-runtime.mjs --check
+node scripts/sync-package-runtime.mjs --write
+```
+
+package 侧：
+
+```powershell
+cd ucasclasser-package
+npm run check
+cargo check --manifest-path src-tauri/Cargo.toml
+npm run tauri:build
+npm run release:manifest
+```
 
 ## 使用说明
 

@@ -28,6 +28,8 @@ pub struct AppSettings {
     pub auth_check_interval_secs: u64,
     pub collect_interval_secs: u64,
     pub cookie_refresh_interval_secs: u64,
+    pub last_seen_app_version: Option<String>,
+    pub last_prompted_update_version: Option<String>,
     pub last_auth_check_at_ms: Option<u64>,
     pub last_collect_finished_at_ms: Option<u64>,
     pub last_cookie_refresh_at_ms: Option<u64>,
@@ -49,6 +51,8 @@ impl Default for AppSettings {
             auth_check_interval_secs: DEFAULT_AUTH_CHECK_INTERVAL_SECS,
             collect_interval_secs: DEFAULT_COLLECT_INTERVAL_SECS,
             cookie_refresh_interval_secs: DEFAULT_COOKIE_REFRESH_INTERVAL_SECS,
+            last_seen_app_version: None,
+            last_prompted_update_version: None,
             last_auth_check_at_ms: None,
             last_collect_finished_at_ms: None,
             last_cookie_refresh_at_ms: None,
@@ -144,6 +148,10 @@ fn normalize_settings(settings: &mut AppSettings) {
         Some("right") => Some("right".to_string()),
         _ => None,
     };
+    settings.last_seen_app_version =
+        normalize_optional_string(settings.last_seen_app_version.as_deref());
+    settings.last_prompted_update_version =
+        normalize_optional_string(settings.last_prompted_update_version.as_deref());
     settings.dock_expanded_width = normalize_optional_dimension(settings.dock_expanded_width);
     settings.dock_expanded_height = normalize_optional_dimension(settings.dock_expanded_height);
 }
@@ -158,6 +166,13 @@ fn normalize_interval_secs(value: u64, default_value: u64) -> u64 {
 
 fn normalize_optional_dimension(value: Option<u32>) -> Option<u32> {
     value.filter(|dimension| *dimension > 0)
+}
+
+fn normalize_optional_string(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
 }
 
 fn normalize_relative_subdir(value: &str) -> String {

@@ -19,6 +19,8 @@ export function createSettingsController({
   renderCourses,
   invokeTauriCommand,
   pickFolderPath,
+  checkForAppUpdate,
+  openRepositoryUrl,
   intervalSecsToMinutes,
   intervalMinutesToSecs,
   getCourseSubdirSelectionPath,
@@ -425,6 +427,16 @@ export function createSettingsController({
     })
     downloadActionRow.append(pickButton, subdirButton)
 
+    const releaseActionRow = createSettingsActionRow()
+    releaseActionRow.append(
+      createDetailAction('检查更新', async () => {
+        await checkForAppUpdate?.()
+      }),
+      createDetailAction('打开 GitHub 仓库', () => {
+        openRepositoryUrl?.()
+      }),
+    )
+
     const scopeField = document.createElement('div')
     scopeField.className = 'settings-field settings-field--scope'
     scopeField.append(
@@ -494,6 +506,7 @@ export function createSettingsController({
     settingsForm.append(
       downloadField.field,
       downloadActionRow,
+      releaseActionRow,
       dockToggleField.field,
       scopeField,
       intervalRow,

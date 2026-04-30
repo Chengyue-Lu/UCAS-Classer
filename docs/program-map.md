@@ -1,9 +1,9 @@
 # UCAS Classer 程序 Map
 
-更新时间：2026-04-23  
+更新时间：2026-04-30  
 文档定位：当前主程序总图，回答“入口在哪里、数据怎么走、哪些文档还有效、哪些点值得继续收口”。
 
-当前发布基线：`v1.1.2`
+当前发布基线：`v1.2.0`
 
 ## 1. 当前结构总览
 
@@ -15,6 +15,7 @@ flowchart TD
   Shell[src-tauri/src/desktop_shell.rs]
   Runtime[src-tauri/src/auth_runtime.rs]
   Data[src-tauri/src/app_data.rs]
+  Release[src-tauri/src/app_release.rs]
   Settings[src-tauri/src/app_settings.rs]
   Importer[src-tauri/src/db_import.rs]
   Downloads[src-tauri/src/downloads.rs]
@@ -82,9 +83,11 @@ flowchart TD
 - `src-tauri/src/auth_runtime.rs`
   - runtime scheduler、auth check、collect、db import 编排
 - `src-tauri/src/app_settings.rs`
-  - 设置持久化与默认值
+  - 设置持久化、版本提醒标记与默认值
+- `src-tauri/src/app_release.rs`
+  - 应用版本状态、GitHub Release 更新检查、确认安装更新
 - `src-tauri/src/app_data.rs`
-  - 从 SQLite 读 dashboard
+  - 从 SQLite 读 dashboard 和未读红点状态
 - `src-tauri/src/db_import.rs`
   - cache JSON -> SQLite
 - `src-tauri/src/downloads.rs`
@@ -100,6 +103,7 @@ flowchart TD
 
 - `main.rs` 已不再承载大块壳层实现
 - `desktop_shell.rs` 已成为桌面窗口行为的主边界
+- `app_release.rs` 承接 `1.2.0` 自动更新与版本提醒后端逻辑
 - `auth_runtime.rs` 当前要点不再是重构，而是继续收口 auth 失败分类、interrupt 恢复与调度手感
 
 ### 2.3 TS request / automation 层
@@ -166,7 +170,16 @@ flowchart TD
 2. Rust 读取 `reminder-state.json`
 3. 对比本轮 notice/material/assignment 是否有新增；作业优先用 `courseId + workId` 作为稳定身份
 4. 按课程聚合系统提醒
-5. 更新提醒基线
+5. 新内容写入 SQLite `content_read_state`，驱动课程卡、模块、条目和托盘红点
+6. 更新提醒基线
+
+### 3.6 自动更新
+
+1. 启动后前端调用 `get_app_release_state`
+2. 如果检测到版本变化且未提示过，显示一次内置更新说明
+3. 之后自动调用 `check_app_update`
+4. 发现 GitHub Release 新版本后弹窗，由用户确认 `install_app_update`
+5. 设置页也提供手动检查更新和打开 GitHub 仓库入口
 
 ## 4. 当前有效文档
 
@@ -193,6 +206,7 @@ flowchart TD
 - `main.rs` 里的 command facade 还能继续压薄
 - `script_runner.rs` 的脚本名协议仍是字符串约定
 - auth 失败分类目前还偏保守，离线恢复与 cookie 失效的边界需要继续观察
+- updater 私钥是后续自动更新的信任根，不能丢失或提交；`1.2.0` 之前版本仍需手动安装一次
 
 ### 5.3 TS
 
@@ -211,4 +225,4 @@ flowchart TD
 
 ## 7. 一句话判断
 
-当前主程序已经进入“结构基本成型，后续按模块继续做减法和打磨体验”的阶段。`1.1.x` 先把作业详情与运行时细节做稳，`1.2.0` 适合作为稳定性和体验收口版，`1.3.0` 再把课表与待办整合进主线。
+当前主程序已经进入“结构基本成型，后续按模块继续做减法和打磨体验”的阶段。`1.2.x` 先把自动更新、作业详情与运行时细节做稳，`1.3.0` 再把课表与待办整合进主线。

@@ -75,7 +75,10 @@ const state = {
     authCheckIntervalSecs: 180 * 60,
     collectIntervalSecs: 15 * 60,
     cookieRefreshIntervalSecs: 720 * 60,
+    lastSeenAppVersion: null,
+    lastPromptedUpdateVersion: null,
   },
+  release: null,
   activeAction: null,
   downloadProgress: createIdleDownloadProgress(),
   modalOpen: false,
@@ -255,6 +258,8 @@ const settingsController = createSettingsController({
   renderCourses: () => courseRendererRef.renderCourses?.(),
   invokeTauriCommand,
   pickFolderPath,
+  checkForAppUpdate: () => checkForAppUpdate({ manual: true }),
+  openRepositoryUrl,
   intervalSecsToMinutes,
   intervalMinutesToSecs,
   getCourseSubdirSelectionPath,
@@ -338,6 +343,10 @@ async function openExternalUrl(url) {
   if (result === null) {
     window.open(url, '_blank', 'noopener,noreferrer')
   }
+}
+
+async function openRepositoryUrl() {
+  await openExternalUrl(state.release?.repositoryUrl || 'https://github.com/Chengyue-Lu/UCAS-Classer')
 }
 
 async function openAuthenticatedUrl(url, options = {}) {
@@ -431,6 +440,155 @@ async function loadSettings() {
     ...settings,
     courseDownloadSubdirs: settings.courseDownloadSubdirs || {},
   }
+}
+
+async function loadAppReleaseState() {
+  const releaseState = await invokeTauriCommand('get_app_release_state')
+  state.release = releaseState || {
+    currentVersion: '',
+    repositoryUrl: 'https://github.com/Chengyue-Lu/UCAS-Classer',
+    latestReleaseUrl: 'https://github.com/Chengyue-Lu/UCAS-Classer/releases/latest',
+    releaseNotes: [],
+  }
+  return state.release
+}
+
+async function markCurrentAppVersionSeen() {
+  const releaseState = await invokeTauriCommand('mark_app_version_seen')
+  if (releaseState) {
+    state.release = releaseState
+  }
+}
+
+async function checkForAppUpdate({ manual = false } = {}) {
+  try {
+    if (manual) {
+      setModalFeedback('正在检查更新...', 'neutral')
+    }
+
+    const result = await invokeTauriCommand('check_app_update')
+    if (!result) {
+      if (manual) {
+        setModalFeedback('当前环境暂不支持自动更新检查。', 'warning')
+      }
+      return null
+    }
+
+    if (result.available) {
+      if (!state.modalOpen || manual) {
+        openUpdateAvailableModal(result)
+      }
+    } else if (manual) {
+      setModalFeedback(`当前已是最新版本 ${result.currentVersion || ''}`.trim(), 'success')
+    }
+
+    return result
+  } catch (error) {
+    if (manual) {
+      setModalFeedback(`检查更新失败：${getErrorMessage(error)}`, 'error')
+    } else {
+      console.error('Failed to check app update', error)
+    }
+    return null
+  }
+}
+
+function openUpdateAvailableModal(update) {
+  state.modalType = 'app-update'
+  resetModal()
+
+  modalKind.textContent = 'Update'
+  modalTitle.textContent = `发现新版本 ${update.version || ''}`.trim()
+  modalMeta.append(
+    createDetailChip('当前版本', update.currentVersion || '未知'),
+    createDetailChip('最新版本', update.version || '未知'),
+  )
+
+  modalActions.append(
+    createDetailAction(
+      '下载并安装',
+      async () => {
+        try {
+          setModalFeedback('正在下载并安装更新，安装阶段应用可能会自动退出...', 'neutral')
+          await invokeRequiredTauriCommand(
+            'install_app_update',
+            {},
+            '当前环境暂不支持自动安装更新。',
+          )
+        } catch (error) {
+          setModalFeedback(`安装更新失败：${getErrorMessage(error)}`, 'error')
+        }
+      },
+      { primary: true },
+    ),
+    createDetailAction('打开发布页', () => {
+      openExternalUrl(update.releaseUrl || state.release?.latestReleaseUrl)
+    }),
+    createDetailAction('稍后', closeDetailModal),
+  )
+
+  const bodyText =
+    update.body?.trim() ||
+    '检测到 UCAS Classer 新版本。建议在当前采集或下载任务结束后再执行更新。'
+  modalBody.append(createTextBlock(bodyText))
+  modalOverlay.hidden = false
+  appShell.classList.add('app-shell--modal-open')
+  state.modalOpen = true
+}
+
+function openPostUpdateNoticeModal(releaseState) {
+  state.modalType = 'post-update'
+  resetModal()
+
+  modalKind.textContent = 'Updated'
+  modalTitle.textContent = `已更新到 ${releaseState.currentVersion || '当前版本'}`
+  modalMeta.append(createDetailChip('版本', releaseState.currentVersion || '未知'))
+
+  const notes = releaseState.releaseNotes || []
+  if (notes.length) {
+    const list = document.createElement('ul')
+    list.className = 'detail-list'
+    notes.forEach((note) => {
+      const item = document.createElement('li')
+      item.textContent = note
+      list.append(item)
+    })
+    modalBody.append(list)
+  } else {
+    modalBody.append(createTextBlock('本版本包含稳定性和使用体验改进。'))
+  }
+
+  modalActions.append(
+    createDetailAction(
+      '知道了',
+      async () => {
+        await markCurrentAppVersionSeen()
+        closeDetailModal()
+      },
+      { primary: true },
+    ),
+    createDetailAction('打开仓库', () => {
+      openRepositoryUrl()
+    }),
+  )
+
+  modalOverlay.hidden = false
+  appShell.classList.add('app-shell--modal-open')
+  state.modalOpen = true
+}
+
+async function initializeAppReleaseLifecycle() {
+  const releaseState = await loadAppReleaseState()
+  if (releaseState.shouldShowPostUpdateNotice) {
+    openPostUpdateNoticeModal(releaseState)
+    return
+  }
+
+  if (!releaseState.lastSeenAppVersion) {
+    await markCurrentAppVersionSeen()
+  }
+
+  void checkForAppUpdate({ manual: false })
 }
 
 async function refreshRuntimeStatus() {
@@ -620,6 +778,7 @@ async function initialize() {
   await initializeDockSync()
   await refreshRuntimeStatus()
   await loadDashboardData()
+  await initializeAppReleaseLifecycle()
 
   startRuntimeUiTimer()
   startRuntimeStatusPolling()

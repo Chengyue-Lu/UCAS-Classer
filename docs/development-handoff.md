@@ -1,6 +1,6 @@
 # UCAS Classer 交接文档
 
-更新时间：2026-04-23  
+更新时间：2026-04-30  
 文档定位：当前项目的总交接入口。  
 阅读建议：先看本文，再按需打开 [program-map.md](/d:/lcy/ucasclasser-develop/docs/program-map.md)、[v1.1.x-v1.3.0-roadmap.md](/d:/lcy/ucasclasser-develop/docs/v1.1.x-v1.3.0-roadmap.md)、[package-runtime-sync.md](/d:/lcy/ucasclasser-develop/docs/package-runtime-sync.md)；历史背景可回看 [archive-completed/v1.0.1-v1.1.0progress.md](/d:/lcy/ucasclasser-develop/docs/archive-completed/v1.0.1-v1.1.0progress.md)。
 
@@ -10,9 +10,9 @@
 
 ## 2. 当前版本状态
 
-- 当前开发 / 打包基线：`v1.1.2`
-- 当前状态：`1.1.2` 属于 `1.1.x` 作业详情与稳定性维护基线
-- 当前工作重点：作业详情稳定打开、附件可见性、提醒语义去重、打包同步与登录态稳定性跟踪
+- 当前开发 / 打包基线：`v1.2.0`
+- 当前状态：`1.2.0` 属于自动更新、版本提醒、发布流程收口基线
+- 当前工作重点：自动更新发布链路验证、版本提醒体验、未读红点稳定性、打包同步与登录态稳定性跟踪
 
 ## 3. 最近一轮有效变更
 
@@ -39,6 +39,14 @@
 - 课程分目录仍由前端计算 `relativeSubdir`
 - 新安装且没有历史路径时，package 侧默认下载目录改为系统 `Downloads\\UCAS Classer`
 
+### 3.4 未读红点与自动更新
+
+- 新通知 / 新资料 / 新作业会写入 SQLite `content_read_state`，课程卡、模块标题、条目行和托盘会显示未读提示
+- `content_read_state` 已收敛为 `identity_key + is_read` 两列；点击条目或托盘清除后标记已读，下一次成功导库会清理已读与已不存在条目
+- `1.2.0` 接入 Tauri 官方 updater，更新源为 GitHub Release 的 `latest.json`
+- 设置页新增“检查更新”和“打开 GitHub 仓库”；启动时自动检查更新，发现新版本后由用户确认下载并安装
+- 版本变化后首次启动会显示一次应用内简短更新说明
+
 ## 4. 当前稳定能力
 
 ### 4.1 登录与调度
@@ -58,6 +66,7 @@
 - 课程按 `全部 / 当前学期 / 以往学期` 分类展示
 - 作业详情已支持“点开按需抓取 + 本地缓存”
 - 新通知 / 新资料 / 新作业的系统提醒已接入桌面端
+- 新内容未读红点已接入课程卡、模块标题、条目行和托盘
 
 ### 4.3 下载与目录
 
@@ -75,6 +84,8 @@
 - 自动侧收 MVP
 - dock 收起与边缘展开态会置顶
 - 关闭主窗口后可从托盘恢复
+- 托盘右键可清除所有未读
+- `1.2.0` 起支持 GitHub Release 自动更新检测与确认安装
 
 ## 5. 当前目录职责
 
@@ -155,11 +166,19 @@ npm run download:batch -- --manifest <path> --output-dir <dir> --conflict overwr
 # 检查
 npm run check
 cargo check --manifest-path src-tauri/Cargo.toml
+
+# package 发布辅助
+cd ucasclasser-package
+$env:TAURI_SIGNING_PRIVATE_KEY_PATH="..\temp\ucas-classer-updater.key"
+npm run tauri:build
+npm run release:manifest
 ```
 
 ## 8. 当前已知边界与风险
 
 - 打包端仍是“主仓共享运行层 + package 壳层手工维护”的模式，不是完全单仓单入口。
+- `1.2.0` 之前的安装包没有 updater，用户需要手动安装一次 `1.2.0`，后续版本才可自动更新。
+- updater 私钥必须长期保存且不能提交；若私钥丢失或更换，已安装的 `1.2.0` 将无法信任后续更新包。
 - `scripts/sync-package-runtime.mjs --check` 仍可能出现少量误报；以实际同步结果和编译结果为准。
 - 登录失败原因目前仍需谨慎区分“cookie 失效”和“临时离线 / 网络异常”；不要轻易把失败等同于应清空本地状态。
 - 自动侧收已经可用，但仍有体验打磨空间，尤其是动画手感和窗口恢复细节。
@@ -192,6 +211,7 @@ cargo check --manifest-path src-tauri/Cargo.toml
   - `shared/runtime-paths.ts`
 - Rust 运行共享层
   - `src-tauri/src/app_data.rs`
+  - `src-tauri/src/app_release.rs`
   - `src-tauri/src/assignment_details.rs`
   - `src-tauri/src/app_settings.rs`
   - `src-tauri/src/auth_runtime.rs`
@@ -220,6 +240,7 @@ cargo check --manifest-path src-tauri/Cargo.toml
   - `ucasclasser-package/src-tauri/Cargo.toml`
   - `ucasclasser-package/src-tauri/tauri.conf.json`
   - `ucasclasser-package/scripts/prepare-runtime.mjs`
+  - `ucasclasser-package/scripts/generate-update-manifest.mjs`
 - package 资源与产物边界
   - `ucasclasser-package/src-tauri/resources/**`
   - `ucasclasser-package/runtime-dist/**`
@@ -230,6 +251,7 @@ cargo check --manifest-path src-tauri/Cargo.toml
 - 打包时的 runtime 资源准备
 - package 端的主窗口 / tray / shell 行为实现
 - 安装包版本号与打包配置
+- updater 签名、公钥、发布 manifest 生成
 
 ### 9.1.3 同步时的实际建议
 
@@ -265,8 +287,7 @@ cargo check --manifest-path src-tauri/Cargo.toml
 
 ## 10. 下一阶段建议
 
-- `1.1.x` 继续做小而准的维护修复，作业详情体验是最明确的近期主线。
-- `1.2.0` 可以作为“稳定性与体验收口版”，并加入轻量的自动检测更新能力。
+- `1.2.x` 继续验证自动更新链路、未读红点和登录态稳定性。
 - `1.3.0` 可以把课表整合进主程序，并围绕课表逐步吸纳待办等时间组织能力。
 - 路线细化见 [v1.1.x-v1.3.0-roadmap.md](/d:/lcy/ucasclasser-develop/docs/v1.1.x-v1.3.0-roadmap.md)。
 

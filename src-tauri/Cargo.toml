@@ -14,4 +14,5 @@ serde_json = "1"
 tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-notification = "2"
+tauri-plugin-updater = "2"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time"] }
