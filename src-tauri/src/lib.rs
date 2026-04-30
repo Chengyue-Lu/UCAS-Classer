@@ -4,6 +4,7 @@ pub mod app_data;
 pub mod app_settings;
 pub mod assignment_details;
 pub mod auth_runtime;
+pub mod content_state;
 pub mod db_import;
 pub mod downloads;
 pub mod paths;

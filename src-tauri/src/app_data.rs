@@ -4,6 +4,12 @@
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 
+use std::collections::{BTreeMap, BTreeSet};
+
+use crate::content_state::{
+    assignment_identity_key, load_unread_keys_by_kind, material_identity_key, notice_identity_key,
+    KIND_ASSIGNMENT, KIND_MATERIAL, KIND_NOTICE,
+};
 use crate::paths::database_file;
 
 #[derive(Debug, Serialize)]
@@ -28,6 +34,10 @@ pub struct DashboardCourse {
     pub notice_count: usize,
     pub material_count: usize,
     pub assignment_count: usize,
+    pub unread_count: usize,
+    pub unread_notice_count: usize,
+    pub unread_material_count: usize,
+    pub unread_assignment_count: usize,
     pub notices: Vec<DashboardNotice>,
     pub materials: Vec<DashboardMaterial>,
     pub assignments: Vec<DashboardAssignment>,
@@ -37,6 +47,8 @@ pub struct DashboardCourse {
 #[serde(rename_all = "camelCase")]
 pub struct DashboardNotice {
     pub notice_id: String,
+    pub identity_key: String,
+    pub is_unread: bool,
     pub title: String,
     pub published_at: Option<String>,
     pub publisher: Option<String>,
@@ -51,6 +63,8 @@ pub struct DashboardNotice {
 #[serde(rename_all = "camelCase")]
 pub struct DashboardMaterial {
     pub node_id: String,
+    pub identity_key: String,
+    pub is_unread: bool,
     pub title: String,
     pub name: String,
     pub path: String,
@@ -67,6 +81,8 @@ pub struct DashboardMaterial {
 #[serde(rename_all = "camelCase")]
 pub struct DashboardAssignment {
     pub title: String,
+    pub identity_key: String,
+    pub is_unread: bool,
     pub status: Option<String>,
     pub start_time: Option<String>,
     pub end_time: Option<String>,
@@ -116,6 +132,7 @@ pub fn load_dashboard_data() -> Result<DashboardData, String> {
     let has_notice_attachments = table_exists(&connection, "notice_attachments")?;
     let has_assignments = table_exists(&connection, "assignments")?;
     let has_course_modules = table_exists(&connection, "course_modules")?;
+    let unread_keys = load_unread_keys_by_kind(&connection)?;
 
     let mut statement = connection
         .prepare(
@@ -149,19 +166,32 @@ pub fn load_dashboard_data() -> Result<DashboardData, String> {
             row.map_err(|error| format!("failed to read dashboard course row: {error}"))?;
 
         let notices = if has_notice_entries {
-            load_course_notices(&connection, &course_id, has_notice_attachments)?
+            load_course_notices(
+                &connection,
+                &course_id,
+                has_notice_attachments,
+                unread_set(&unread_keys, KIND_NOTICE),
+            )?
         } else {
             Vec::new()
         };
 
         let materials = if has_material_nodes {
-            load_course_materials(&connection, &course_id)?
+            load_course_materials(
+                &connection,
+                &course_id,
+                unread_set(&unread_keys, KIND_MATERIAL),
+            )?
         } else {
             Vec::new()
         };
 
         let assignments = if has_assignments {
-            load_course_assignments(&connection, &course_id)?
+            load_course_assignments(
+                &connection,
+                &course_id,
+                unread_set(&unread_keys, KIND_ASSIGNMENT),
+            )?
         } else {
             Vec::new()
         };
@@ -176,6 +206,13 @@ pub fn load_dashboard_data() -> Result<DashboardData, String> {
             .iter()
             .filter(|item| item.node_type == "file")
             .count();
+        let unread_notice_count = notices.iter().filter(|item| item.is_unread).count();
+        let unread_material_count = materials
+            .iter()
+            .filter(|item| item.node_type == "file" && item.is_unread)
+            .count();
+        let unread_assignment_count = assignments.iter().filter(|item| item.is_unread).count();
+        let unread_count = unread_notice_count + unread_material_count + unread_assignment_count;
 
         courses.push(DashboardCourse {
             course_id,
@@ -188,6 +225,10 @@ pub fn load_dashboard_data() -> Result<DashboardData, String> {
             notice_count: notices.len(),
             material_count,
             assignment_count: assignments.len(),
+            unread_count,
+            unread_notice_count,
+            unread_material_count,
+            unread_assignment_count,
             notices,
             materials,
             assignments,
@@ -206,6 +247,7 @@ fn load_course_notices(
     connection: &Connection,
     course_id: &str,
     has_notice_attachments: bool,
+    unread_keys: &BTreeSet<String>,
 ) -> Result<Vec<DashboardNotice>, String> {
     let mut statement = connection
         .prepare(
@@ -259,9 +301,13 @@ fn load_course_notices(
         } else {
             Vec::new()
         };
+        let identity_key = notice_identity_key(course_id, &notice_id);
+        let is_unread = unread_keys.contains(&identity_key);
 
         notices.push(DashboardNotice {
             notice_id,
+            identity_key,
+            is_unread,
             title,
             published_at,
             publisher,
@@ -315,6 +361,7 @@ fn load_notice_attachments(
 fn load_course_materials(
     connection: &Connection,
     course_id: &str,
+    unread_keys: &BTreeSet<String>,
 ) -> Result<Vec<DashboardMaterial>, String> {
     let mut statement = connection
         .prepare(
@@ -339,10 +386,15 @@ fn load_course_materials(
 
     let rows = statement
         .query_map(params![course_id], |row| {
+            let node_id = row.get::<_, String>(0)?;
             let path = row.get::<_, String>(1)?;
             let name = row.get::<_, String>(2)?;
+            let identity_key = material_identity_key(course_id, &node_id);
+            let is_unread = unread_keys.contains(&identity_key);
             Ok(DashboardMaterial {
-                node_id: row.get::<_, String>(0)?,
+                node_id,
+                identity_key,
+                is_unread,
                 title: path.clone(),
                 path,
                 name,
@@ -364,6 +416,7 @@ fn load_course_materials(
 fn load_course_assignments(
     connection: &Connection,
     course_id: &str,
+    unread_keys: &BTreeSet<String>,
 ) -> Result<Vec<DashboardAssignment>, String> {
     let work_id_expr = if table_column_exists(connection, "assignments", "work_id")? {
         "work_id"
@@ -397,15 +450,31 @@ fn load_course_assignments(
 
     let rows = statement
         .query_map(params![course_id], |row| {
+            let title = row.get::<_, String>(0)?;
+            let work_id = row.get::<_, Option<String>>(5)?;
+            let start_time = row.get::<_, Option<String>>(2)?;
+            let end_time = row.get::<_, Option<String>>(3)?;
+            let raw_text = row.get::<_, String>(7)?;
+            let identity_key = assignment_identity_key(
+                course_id,
+                &title,
+                work_id.as_deref(),
+                start_time.as_deref(),
+                end_time.as_deref(),
+                &raw_text,
+            );
+            let is_unread = unread_keys.contains(&identity_key);
             Ok(DashboardAssignment {
-                title: row.get::<_, String>(0)?,
+                title,
+                identity_key,
+                is_unread,
                 status: row.get::<_, Option<String>>(1)?,
-                start_time: row.get::<_, Option<String>>(2)?,
-                end_time: row.get::<_, Option<String>>(3)?,
+                start_time,
+                end_time,
                 work_url: row.get::<_, Option<String>>(4)?,
-                work_id: row.get::<_, Option<String>>(5)?,
+                work_id,
                 work_answer_id: row.get::<_, Option<String>>(6)?,
-                raw_text: row.get::<_, String>(7)?,
+                raw_text,
             })
         })
         .map_err(|error| {
@@ -414,6 +483,21 @@ fn load_course_assignments(
 
     rows.collect::<Result<Vec<_>, _>>()
         .map_err(|error| format!("failed to read assignments: {error}"))
+}
+
+fn unread_set<'a>(
+    unread_keys: &'a BTreeMap<String, BTreeSet<String>>,
+    kind: &str,
+) -> &'a BTreeSet<String> {
+    match unread_keys.get(kind) {
+        Some(keys) => keys,
+        None => empty_unread_set(),
+    }
+}
+
+fn empty_unread_set() -> &'static BTreeSet<String> {
+    static EMPTY: std::sync::OnceLock<BTreeSet<String>> = std::sync::OnceLock::new();
+    EMPTY.get_or_init(BTreeSet::new)
 }
 
 fn load_course_module_urls(

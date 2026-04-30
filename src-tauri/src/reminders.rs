@@ -9,6 +9,10 @@ use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 use tauri_plugin_notification::NotificationExt;
 
+use crate::content_state::{
+    assignment_identity_key, count_current_unread, mark_items_unread, material_identity_key,
+    notice_identity_key, ContentIdentity, KIND_ASSIGNMENT, KIND_MATERIAL, KIND_NOTICE,
+};
 use crate::paths::{data_dir, database_file, reminder_state_file};
 
 #[derive(Debug, Default, Deserialize, Serialize)]
@@ -35,6 +39,7 @@ pub struct ReminderSyncResult {
     pub baseline_established: bool,
     pub collect_finished_at: Option<String>,
     pub notification_count: usize,
+    pub unread_count: usize,
 }
 
 pub fn sync_post_import_reminders(app: &AppHandle) -> Result<ReminderSyncResult, String> {
@@ -44,6 +49,7 @@ pub fn sync_post_import_reminders(app: &AppHandle) -> Result<ReminderSyncResult,
             baseline_established: false,
             collect_finished_at: None,
             notification_count: 0,
+            unread_count: 0,
         });
     }
 
@@ -60,6 +66,7 @@ pub fn sync_post_import_reminders(app: &AppHandle) -> Result<ReminderSyncResult,
             baseline_established: false,
             collect_finished_at: None,
             notification_count: 0,
+            unread_count: count_current_unread(&connection)?,
         });
     };
 
@@ -87,6 +94,7 @@ pub fn sync_post_import_reminders(app: &AppHandle) -> Result<ReminderSyncResult,
             baseline_established: state.baseline_established,
             collect_finished_at: Some(collect_finished_at),
             notification_count: 0,
+            unread_count: count_current_unread(&connection)?,
         });
     }
 
@@ -102,10 +110,13 @@ pub fn sync_post_import_reminders(app: &AppHandle) -> Result<ReminderSyncResult,
             baseline_established: true,
             collect_finished_at: Some(collect_finished_at),
             notification_count: 0,
+            unread_count: count_current_unread(&connection)?,
         });
     }
 
     let mut course_aggregates = BTreeMap::<String, ReminderCourseAggregate>::new();
+
+    let mut unread_items = Vec::<ContentIdentity>::new();
 
     notice_items
         .iter()
@@ -120,6 +131,7 @@ pub fn sync_post_import_reminders(app: &AppHandle) -> Result<ReminderSyncResult,
                     new_assignments: Vec::new(),
                 });
             aggregate.new_notices.push(item.title.clone());
+            unread_items.push(item.content_identity());
         });
 
     material_items
@@ -135,6 +147,7 @@ pub fn sync_post_import_reminders(app: &AppHandle) -> Result<ReminderSyncResult,
                     new_assignments: Vec::new(),
                 });
             aggregate.new_materials.push(item.title.clone());
+            unread_items.push(item.content_identity());
         });
 
     assignment_items
@@ -150,6 +163,7 @@ pub fn sync_post_import_reminders(app: &AppHandle) -> Result<ReminderSyncResult,
                     new_assignments: Vec::new(),
                 });
             aggregate.new_assignments.push(item.title.clone());
+            unread_items.push(item.content_identity());
         });
 
     let mut notification_count = 0usize;
@@ -168,17 +182,20 @@ pub fn sync_post_import_reminders(app: &AppHandle) -> Result<ReminderSyncResult,
     state.seen_notice_keys = current_notice_keys;
     state.seen_material_keys = current_material_keys;
     state.seen_assignment_keys = current_assignment_keys;
+    mark_items_unread(&connection, &unread_items)?;
     save_reminder_state(&state)?;
 
     Ok(ReminderSyncResult {
         baseline_established: true,
         collect_finished_at: Some(collect_finished_at),
         notification_count,
+        unread_count: count_current_unread(&connection)?,
     })
 }
 
 #[derive(Debug)]
 struct ReminderItem {
+    kind: String,
     course_id: String,
     course_name: String,
     identity_key: String,
@@ -193,6 +210,14 @@ impl ReminderItem {
                 .legacy_identity_key
                 .as_ref()
                 .is_some_and(|legacy_key| seen_keys.contains(legacy_key))
+    }
+
+    fn content_identity(&self) -> ContentIdentity {
+        ContentIdentity {
+            kind: self.kind.clone(),
+            course_id: self.course_id.clone(),
+            identity_key: self.identity_key.clone(),
+        }
     }
 }
 
@@ -225,9 +250,10 @@ fn load_notice_items(connection: &Connection) -> Result<Vec<ReminderItem>, Strin
             let course_id = row.get::<_, String>(0)?;
             let notice_id = row.get::<_, String>(2)?;
             Ok(ReminderItem {
+                kind: KIND_NOTICE.to_string(),
                 course_id: course_id.clone(),
                 course_name: row.get::<_, String>(1)?,
-                identity_key: format!("notice:{course_id}:{notice_id}"),
+                identity_key: notice_identity_key(&course_id, &notice_id),
                 legacy_identity_key: None,
                 title: row.get::<_, String>(3)?,
             })
@@ -255,9 +281,10 @@ fn load_material_items(connection: &Connection) -> Result<Vec<ReminderItem>, Str
             let course_id = row.get::<_, String>(0)?;
             let node_id = row.get::<_, String>(2)?;
             Ok(ReminderItem {
+                kind: KIND_MATERIAL.to_string(),
                 course_id: course_id.clone(),
                 course_name: row.get::<_, String>(1)?,
-                identity_key: format!("material:{course_id}:{node_id}"),
+                identity_key: material_identity_key(&course_id, &node_id),
                 legacy_identity_key: None,
                 title: row.get::<_, String>(3)?,
             })
@@ -291,25 +318,23 @@ fn load_assignment_items(connection: &Connection) -> Result<Vec<ReminderItem>, S
             let title = row.get::<_, String>(2)?;
             let work_id = row.get::<_, Option<String>>(3)?;
             let work_url = row.get::<_, Option<String>>(4)?;
-            let identity_key = work_id
-                .filter(|value| !value.trim().is_empty())
-                .map(|value| format!("assignment:{course_id}:work:{value}"))
-                .unwrap_or_else(|| {
-                    format!(
-                        "assignment:{course_id}:{}",
-                        serde_json::json!({
-                            "title": title,
-                            "startTime": row.get::<_, Option<String>>(5).ok().flatten(),
-                            "endTime": row.get::<_, Option<String>>(6).ok().flatten(),
-                            "rawText": row.get::<_, String>(7).unwrap_or_default(),
-                        })
-                    )
-                });
+            let start_time = row.get::<_, Option<String>>(5).ok().flatten();
+            let end_time = row.get::<_, Option<String>>(6).ok().flatten();
+            let raw_text = row.get::<_, String>(7).unwrap_or_default();
+            let identity_key = assignment_identity_key(
+                &course_id,
+                &title,
+                work_id.as_deref(),
+                start_time.as_deref(),
+                end_time.as_deref(),
+                &raw_text,
+            );
             let legacy_identity_key = work_url
                 .filter(|value| !value.trim().is_empty())
                 .map(|value| format!("assignment:{course_id}:{value}"));
 
             Ok(ReminderItem {
+                kind: KIND_ASSIGNMENT.to_string(),
                 course_id,
                 course_name: row.get::<_, String>(1)?,
                 identity_key,

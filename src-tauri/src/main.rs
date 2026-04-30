@@ -13,9 +13,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use desktop_shell::{
     build_tray, collapse_docked_window, exit_dock_mode, expand_docked_window,
     get_window_dock_state, handle_main_window_event, open_external_url, pick_folder_path,
-    window_close, window_minimize, DockManager, ExitGuard,
+    publish_content_unread_state, window_close, window_minimize, DockManager, ExitGuard,
 };
-use tauri::{Manager, RunEvent, State};
+use tauri::{AppHandle, Manager, RunEvent, State};
 use ucas_classer::app_data::{load_dashboard_data as load_dashboard_data_impl, DashboardData};
 use ucas_classer::app_settings::{
     load_app_settings as load_app_settings_impl, save_app_settings as save_app_settings_impl,
@@ -39,6 +39,10 @@ use ucas_classer::auth_runtime::{
     start_runtime_scheduler as start_runtime_scheduler_impl,
     stop_runtime_scheduler as stop_runtime_scheduler_impl, RuntimeService, RuntimeSnapshot,
     SharedRuntimeService,
+};
+use ucas_classer::content_state::{
+    mark_all_content_viewed as mark_all_content_viewed_impl,
+    mark_content_item_viewed as mark_content_item_viewed_impl, ContentReadUpdateResult,
 };
 use ucas_classer::downloads::{
     download_protected_file as download_protected_file_impl,
@@ -255,7 +259,28 @@ async fn load_assignment_detail(
 
 #[tauri::command]
 fn sync_post_import_reminders(app: tauri::AppHandle) -> Result<ReminderSyncResult, String> {
-    sync_post_import_reminders_impl(&app)
+    let result = sync_post_import_reminders_impl(&app)?;
+    publish_content_unread_state(&app, result.unread_count)?;
+    Ok(result)
+}
+
+#[tauri::command]
+fn mark_content_item_viewed(
+    app: AppHandle,
+    kind: String,
+    course_id: String,
+    identity_key: String,
+) -> Result<ContentReadUpdateResult, String> {
+    let result = mark_content_item_viewed_impl(kind, course_id, identity_key)?;
+    publish_content_unread_state(&app, result.unread_count)?;
+    Ok(result)
+}
+
+#[tauri::command]
+fn mark_all_content_viewed(app: AppHandle) -> Result<ContentReadUpdateResult, String> {
+    let result = mark_all_content_viewed_impl()?;
+    publish_content_unread_state(&app, result.unread_count)?;
+    Ok(result)
 }
 
 fn main() {
@@ -305,6 +330,8 @@ fn main() {
             download_protected_files,
             load_assignment_detail,
             sync_post_import_reminders,
+            mark_content_item_viewed,
+            mark_all_content_viewed,
         ])
         .build(tauri::generate_context!())
         .expect("failed to build tauri application")

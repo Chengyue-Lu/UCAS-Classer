@@ -9,13 +9,8 @@ src-tauri/target/
 src-tauri/resources/runtime/*
 !src-tauri/resources/runtime/.gitkeep
 
-data/cache/
-data/cache-browser-baseline/
-data/session/
-data/auth/
-data/app-settings.json
-data/tauri-dev-stdout.log
-data/tauri-dev-stderr.log
+data/
+
 auth.local.json
 tests/
 temp/

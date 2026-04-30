@@ -673,6 +673,16 @@ select {
   min-height: 22px;
 }
 
+.course-card__unread-dot {
+  width: 9px;
+  height: 9px;
+  border: 2px solid rgba(255, 252, 247, 0.95);
+  border-radius: 999px;
+  background: #df3033;
+  box-shadow: 0 0 0 1px rgba(118, 22, 24, 0.2);
+  flex-shrink: 0;
+}
+
 .course-card__inline-stat {
   font-size: 11px;
   line-height: 1;
@@ -772,6 +782,19 @@ select {
   font-size: 12px;
   line-height: 1;
   color: var(--muted);
+  white-space: nowrap;
+}
+
+.module-card__unread-pill {
+  flex-shrink: 0;
+  border: 1px solid rgba(196, 38, 44, 0.18);
+  border-radius: 999px;
+  padding: 2px 7px;
+  background: rgba(223, 48, 51, 0.12);
+  color: #b42127;
+  font-size: 11px;
+  line-height: 1.2;
+  font-weight: 800;
   white-space: nowrap;
 }
 
@@ -917,6 +940,18 @@ select {
   flex-shrink: 0;
   font-size: 15px;
   color: var(--accent-strong);
+}
+
+.module-item-button__new {
+  flex-shrink: 0;
+  border: 1px solid rgba(196, 38, 44, 0.2);
+  border-radius: 999px;
+  padding: 3px 7px;
+  background: rgba(223, 48, 51, 0.12);
+  color: #b42127;
+  font-size: 11px;
+  line-height: 1.2;
+  font-weight: 800;
 }
 
 .module-card__empty {

@@ -228,6 +228,7 @@ const courseRenderer = createCourseRenderer({
   courseCount,
   emptyState,
   openDetailModal: (...args) => detailControllerRef.openDetailModal?.(...args),
+  markContentItemViewed,
   downloadMaterialBatch,
 })
 
@@ -364,9 +365,11 @@ async function loadAssignmentDetail(request) {
 
 async function syncPostImportReminders() {
   try {
-    await invokeTauriCommand('sync_post_import_reminders')
+    const result = await invokeTauriCommand('sync_post_import_reminders')
+    return result
   } catch (error) {
     console.error('Failed to sync post-import reminders', error)
+    return null
   }
 }
 
@@ -385,6 +388,36 @@ async function loadDashboardData() {
 
   renderCourses()
   syncRuntimePanel()
+}
+
+async function markContentItemViewed(kind, course, item) {
+  if (!item?.isUnread || !item.identityKey) {
+    return
+  }
+
+  try {
+    await invokeTauriCommand('mark_content_item_viewed', {
+      kind,
+      courseId: course.courseId,
+      identityKey: item.identityKey,
+    })
+    item.isUnread = false
+    decrementUnreadCounters(course, kind)
+    renderCourses()
+  } catch (error) {
+    console.error('Failed to mark content item viewed', error)
+  }
+}
+
+function decrementUnreadCounters(course, kind) {
+  course.unreadCount = Math.max(0, Number(course.unreadCount || 0) - 1)
+  if (kind === 'notice') {
+    course.unreadNoticeCount = Math.max(0, Number(course.unreadNoticeCount || 0) - 1)
+  } else if (kind === 'materials') {
+    course.unreadMaterialCount = Math.max(0, Number(course.unreadMaterialCount || 0) - 1)
+  } else if (kind === 'assignments') {
+    course.unreadAssignmentCount = Math.max(0, Number(course.unreadAssignmentCount || 0) - 1)
+  }
 }
 
 async function loadSettings() {
@@ -418,8 +451,8 @@ async function refreshRuntimeStatus() {
 
   if (importVersion && importVersion !== state.lastSeenDbImportFinishedAt) {
     state.lastSeenDbImportFinishedAt = importVersion
-    await loadDashboardData()
     await syncPostImportReminders()
+    await loadDashboardData()
   }
 }
 
@@ -445,6 +478,7 @@ async function runRuntimeAction(action) {
     }
 
     if (action === 'collect') {
+      await syncPostImportReminders()
       await loadDashboardData()
     }
   } finally {
@@ -523,6 +557,21 @@ function bindTitleOverflowRefresh() {
   })
 }
 
+function bindContentUnreadEvents() {
+  const listen = getTauriEventListen()
+  if (!listen) {
+    return
+  }
+
+  void Promise.resolve(
+    listen('content-unread-changed', () => {
+      void loadDashboardData()
+    }),
+  ).catch((error) => {
+    console.error('Failed to bind content unread event', error)
+  })
+}
+
 function startRuntimeUiTimer() {
   window.setInterval(() => {
     syncRuntimePanel()
@@ -566,9 +615,11 @@ async function initialize() {
     return
   }
 
+  bindContentUnreadEvents()
   await Promise.all([loadSettings(), initializeRuntime()])
   await initializeDockSync()
-  await Promise.all([refreshRuntimeStatus(), loadDashboardData()])
+  await refreshRuntimeStatus()
+  await loadDashboardData()
 
   startRuntimeUiTimer()
   startRuntimeStatusPolling()

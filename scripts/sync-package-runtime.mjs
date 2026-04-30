@@ -28,6 +28,7 @@ const sharedFiles = [
   'src-tauri/src/assignment_details.rs',
   'src-tauri/src/app_settings.rs',
   'src-tauri/src/auth_runtime.rs',
+  'src-tauri/src/content_state.rs',
   'src-tauri/src/db_import.rs',
   'src-tauri/src/downloads.rs',
   'src-tauri/src/lib.rs',

@@ -8,6 +8,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 use tauri::{
+    image::Image,
     menu::MenuBuilder,
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     AppHandle, Emitter, Manager, PhysicalPosition, PhysicalRect, PhysicalSize, Position, Size,
@@ -17,6 +18,9 @@ use tauri_plugin_dialog::DialogExt;
 use ucas_classer::app_settings::{
     load_app_settings as load_app_settings_impl, save_app_settings as save_app_settings_impl,
     AppSettings,
+};
+use ucas_classer::content_state::{
+    count_current_unread_from_database, mark_all_content_viewed, ContentReadUpdateResult,
 };
 
 const DEFAULT_WINDOW_WIDTH: u32 = 480;
@@ -29,6 +33,7 @@ const MOVE_SUPPRESSION_MS: u64 = 420;
 const WINDOW_ANIMATION_STEPS: i32 = 10;
 const WINDOW_ANIMATION_STEP_MS: u64 = 16;
 const DOCK_STATE_EVENT: &str = "dock-state-changed";
+const CONTENT_UNREAD_CHANGED_EVENT: &str = "content-unread-changed";
 
 pub struct ExitGuard(pub AtomicBool);
 
@@ -653,6 +658,7 @@ fn destroy_main_window(window: &WebviewWindow) -> Result<(), String> {
 pub fn build_tray(app: &AppHandle) -> Result<(), String> {
     let menu = MenuBuilder::new(app)
         .text("show", "显示主窗口")
+        .text("clear-unread", "清除所有未读")
         .text("quit", "退出应用")
         .build()
         .map_err(|error| error.to_string())?;
@@ -664,6 +670,11 @@ pub fn build_tray(app: &AppHandle) -> Result<(), String> {
         .on_menu_event(|app, event| match event.id().as_ref() {
             "show" => {
                 let _ = show_main_window(app);
+            }
+            "clear-unread" => {
+                if let Ok(result) = mark_all_content_viewed() {
+                    let _ = publish_content_unread_state(app, result.unread_count);
+                }
             }
             "quit" => {
                 app.state::<ExitGuard>().0.store(true, Ordering::Relaxed);
@@ -687,7 +698,74 @@ pub fn build_tray(app: &AppHandle) -> Result<(), String> {
     }
 
     builder.build(app).map_err(|error| error.to_string())?;
+    let unread_count = count_current_unread_from_database().unwrap_or_default();
+    update_tray_unread_state(app, unread_count)?;
     Ok(())
+}
+
+pub fn publish_content_unread_state(app: &AppHandle, unread_count: usize) -> Result<(), String> {
+    update_tray_unread_state(app, unread_count)?;
+    app.emit(
+        CONTENT_UNREAD_CHANGED_EVENT,
+        ContentReadUpdateResult { unread_count },
+    )
+    .map_err(|error| format!("failed to emit content unread state: {error}"))
+}
+
+pub fn update_tray_unread_state(app: &AppHandle, unread_count: usize) -> Result<(), String> {
+    let Some(tray) = app.tray_by_id("main-tray") else {
+        return Ok(());
+    };
+
+    if unread_count > 0 {
+        if let Some(icon) = app.default_window_icon().cloned() {
+            tray.set_icon(Some(build_unread_tray_icon(&icon)))
+                .map_err(|error| error.to_string())?;
+        }
+        tray.set_tooltip(Some("UCAS Classer · 有未查看内容"))
+            .map_err(|error| error.to_string())?;
+        return Ok(());
+    }
+
+    if let Some(icon) = app.default_window_icon().cloned() {
+        tray.set_icon(Some(icon))
+            .map_err(|error| error.to_string())?;
+    }
+    tray.set_tooltip(Some("UCAS Classer"))
+        .map_err(|error| error.to_string())
+}
+
+fn build_unread_tray_icon(base: &Image<'_>) -> Image<'static> {
+    let width = base.width();
+    let height = base.height();
+    let mut rgba = base.rgba().to_vec();
+    let min_side = width.min(height).max(1) as f32;
+    let red_radius = (min_side * 0.16).max(4.0);
+    let border_radius = red_radius + (min_side * 0.035).max(1.0);
+    let center_x = width as f32 - border_radius - 1.0;
+    let center_y = border_radius + 1.0;
+
+    for y in 0..height {
+        for x in 0..width {
+            let dx = x as f32 + 0.5 - center_x;
+            let dy = y as f32 + 0.5 - center_y;
+            let distance = (dx * dx + dy * dy).sqrt();
+            let offset = ((y * width + x) * 4) as usize;
+            if distance <= red_radius {
+                rgba[offset] = 222;
+                rgba[offset + 1] = 47;
+                rgba[offset + 2] = 49;
+                rgba[offset + 3] = 255;
+            } else if distance <= border_radius {
+                rgba[offset] = 255;
+                rgba[offset + 1] = 255;
+                rgba[offset + 2] = 255;
+                rgba[offset + 3] = 245;
+            }
+        }
+    }
+
+    Image::new_owned(rgba, width, height)
 }
 
 pub fn handle_main_window_event(window: &Window, event: &WindowEvent) {

@@ -16,11 +16,15 @@ function createInlineStat(label, count) {
 }
 
 function getDisplayItems(kind, items) {
-  if (kind !== 'materials') {
-    return items
-  }
+  const visibleItems = kind === 'materials' ? items.filter((item) => item.nodeType !== 'folder') : items
 
-  return items.filter((item) => item.nodeType !== 'folder')
+  return visibleItems
+    .map((item, index) => ({ item, index }))
+    .sort((left, right) => {
+      const unreadDelta = Number(Boolean(right.item.isUnread)) - Number(Boolean(left.item.isUnread))
+      return unreadDelta || left.index - right.index
+    })
+    .map(({ item }) => item)
 }
 
 function getItemTitle(kind, item) {
@@ -133,15 +137,42 @@ export function createCourseRenderer({
   courseCount,
   emptyState,
   openDetailModal,
+  markContentItemViewed,
   downloadMaterialBatch,
 }) {
+  const expandedCourses = new Set()
+  const expandedModules = new Set()
+
+  function getCourseKey(course) {
+    return course.courseId || course.courseName || ''
+  }
+
+  function getModuleKey(course, kind) {
+    return `${getCourseKey(course)}:${kind}`
+  }
+
+  function getModuleUnreadCount(course, kind) {
+    if (kind === 'notice') {
+      return Number(course.unreadNoticeCount || 0)
+    }
+    if (kind === 'materials') {
+      return Number(course.unreadMaterialCount || 0)
+    }
+    if (kind === 'assignments') {
+      return Number(course.unreadAssignmentCount || 0)
+    }
+    return 0
+  }
+
   function createModuleCard(course, kind, label, items) {
     const displayItems = getDisplayItems(kind, items)
     const downloadableItems = displayItems.filter((item) => item.downloadUrl)
+    const moduleKey = getModuleKey(course, kind)
+    const unreadCount = getModuleUnreadCount(course, kind)
 
     const moduleCard = document.createElement('article')
     moduleCard.className = 'module-card'
-    moduleCard.dataset.expanded = 'false'
+    moduleCard.dataset.expanded = String(expandedModules.has(moduleKey))
     moduleCard.dataset.module = kind
 
     const toggle = document.createElement('button')
@@ -159,11 +190,16 @@ export function createCourseRenderer({
     meta.className = 'module-card__meta'
     meta.textContent = `${displayItems.length} 项`
 
+    const unreadPill = document.createElement('span')
+    unreadPill.className = 'module-card__unread-pill'
+    unreadPill.textContent = `新 ${formatCount(unreadCount)}`
+    unreadPill.hidden = unreadCount <= 0
+
     const chevron = document.createElement('span')
     chevron.className = 'module-card__chevron'
     chevron.setAttribute('aria-hidden', 'true')
 
-    copy.append(title, meta)
+    copy.append(title, meta, unreadPill)
     toggle.append(copy, chevron)
 
     const body = document.createElement('div')
@@ -246,18 +282,24 @@ export function createCourseRenderer({
           arrow.className = 'module-item-button__arrow'
           arrow.textContent = '→'
 
+          const unreadBadge = document.createElement('span')
+          unreadBadge.className = 'module-item-button__new'
+          unreadBadge.textContent = '新!'
+          unreadBadge.hidden = !item.isUnread
+
           if (kind === 'assignments') {
             const badge = document.createElement('span')
             badge.className = 'module-item-button__badge'
             badge.textContent = item.status || getAssignmentStateLabel(button.dataset.assignmentState)
-            button.append(text, badge, arrow)
+            button.append(text, badge, unreadBadge, arrow)
           } else {
-            button.append(text, arrow)
+            button.append(text, unreadBadge, arrow)
           }
 
           button.addEventListener('click', (event) => {
             event.stopPropagation()
             openDetailModal(kind, course, item)
+            void markContentItemViewed?.(kind, course, item)
           })
 
           li.append(button)
@@ -292,7 +334,13 @@ export function createCourseRenderer({
     }
 
     toggle.addEventListener('click', () => {
-      moduleCard.dataset.expanded = String(moduleCard.dataset.expanded !== 'true')
+      const expanded = moduleCard.dataset.expanded !== 'true'
+      moduleCard.dataset.expanded = String(expanded)
+      if (expanded) {
+        expandedModules.add(moduleKey)
+      } else {
+        expandedModules.delete(moduleKey)
+      }
     })
 
     moduleCard.append(toggle, body)
@@ -321,9 +369,10 @@ export function createCourseRenderer({
   }
 
   function createCourseCard(course) {
+    const courseKey = getCourseKey(course)
     const card = document.createElement('article')
     card.className = 'course-card'
-    card.dataset.expanded = 'false'
+    card.dataset.expanded = String(expandedCourses.has(courseKey))
 
     const toggle = document.createElement('button')
     toggle.className = 'course-card__toggle'
@@ -360,6 +409,15 @@ export function createCourseRenderer({
     const chevron = document.createElement('span')
     chevron.className = 'course-card__chevron'
     chevron.setAttribute('aria-hidden', 'true')
+
+    if (course.unreadCount > 0) {
+      const unreadDot = document.createElement('span')
+      unreadDot.className = 'course-card__unread-dot'
+      unreadDot.title = `${formatCount(course.unreadCount)} 个未查看条目`
+      unreadDot.setAttribute('aria-label', `${formatCount(course.unreadCount)} 个未查看条目`)
+      summaryStats.append(unreadDot)
+    }
+
     summaryStats.append(chevron)
 
     header.append(titleMarquee, summaryStats)
@@ -384,7 +442,13 @@ export function createCourseRenderer({
     card.append(toggle, body)
 
     toggle.addEventListener('click', () => {
-      card.dataset.expanded = String(card.dataset.expanded !== 'true')
+      const expanded = card.dataset.expanded !== 'true'
+      card.dataset.expanded = String(expanded)
+      if (expanded) {
+        expandedCourses.add(courseKey)
+      } else {
+        expandedCourses.delete(courseKey)
+      }
       requestAnimationFrame(() => refreshTitleMarquee(card))
     })
 

@@ -9,6 +9,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use serde::{Deserialize, Serialize};
 
+use crate::content_state;
 use crate::paths::{
     assignment_list_file, course_list_file, course_module_file, data_dir, database_file,
     full_collect_summary_file, material_list_file, notice_list_file,
@@ -498,6 +499,8 @@ fn init_schema(connection: &Connection) -> Result<(), String> {
             ",
         )
         .map_err(|error| format!("failed to initialize database schema: {error}"))?;
+
+    content_state::init_schema(connection)?;
 
     ensure_column(
         connection,
