@@ -42,7 +42,11 @@ if (!(await pathExists(signaturePath))) {
 }
 
 const signature = (await readFile(signaturePath, 'utf8')).trim()
-const assetUrl = `https://github.com/${REPOSITORY}/releases/download/${encodeURIComponent(tag)}/${encodeURIComponent(updateBundleName)}`
+const githubAssetName = getArg(
+  'asset-name',
+  updateBundleName.replaceAll(' ', '.'),
+)
+const assetUrl = `https://github.com/${REPOSITORY}/releases/download/${encodeURIComponent(tag)}/${encodeURIComponent(githubAssetName)}`
 const manifest = {
   version,
   notes,
