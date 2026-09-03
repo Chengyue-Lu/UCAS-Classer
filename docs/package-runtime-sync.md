@@ -1,6 +1,6 @@
 # 打包端运行层同步说明
 
-更新时间：2026-04-30  
+更新时间：2026-09-03
 文档定位：说明主仓运行层与本地 `ucasclasser-package/` 的同步边界。
 
 ## 1. 基本原则
@@ -107,7 +107,7 @@ npm run tauri:build
 - 私钥不要提交，当前本机建议放在被忽略的 `temp/` 目录
 - GitHub Release 需要上传 NSIS 安装包、对应 `.sig` 和 `latest.json`
 - 如果 `tauri build` 在自动签名阶段卡住，使用主仓命令手动签名：
-  `npx tauri signer sign --private-key-path (Resolve-Path "temp\ucas-classer-updater.key").Path --password= "ucasclasser-package\src-tauri\target\release\bundle\nsis\UCAS Classer_1.2.0_x64-setup.exe"`
+  `npx tauri signer sign --private-key-path (Resolve-Path "temp\ucas-classer-updater.key").Path --password= "ucasclasser-package\src-tauri\target\release\bundle\nsis\UCAS Classer_1.2.1_x64-setup.exe"`
 - 生成 manifest：
   `node scripts/generate-update-manifest.mjs --package-root=ucasclasser-package`
 

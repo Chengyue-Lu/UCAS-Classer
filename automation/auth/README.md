@@ -4,6 +4,7 @@
 
 1. `login-and-save-sep.ts`
    - 打开可见浏览器到 SEP 登录页
+   - 首次 / 新设备登录落到新版 SEP 工作台时，自动补走“国科大在线” SSO 入口
    - 登录成功后自动保存 `storage-state.json`
 2. `check-api.ts`
    - 直接用 request context 检查登录态
@@ -15,11 +16,13 @@
 npm run auth:reset
 npm run auth:login
 npm run auth:check
+npm run test:auth
 ```
 
 补充说明：
 
 - `auth:login` 和 `auth:open` 现在都走 SEP 版登录链。
+- 验证码、设备验证仍由用户在可见浏览器中完成；脚本只会在进入已认证的 SEP 工作台后补跳 MOOC。
 - `auth:check` 是当前唯一主线校验入口。
 - `auth:check -- --refresh-storage-on-success` 仍然可用，runtime 的 cookie refresh 继续复用这条命令。
 - 旧的浏览器调试脚本已移出主仓跟踪，归档在本机 `.local-archive/automation/auth/`。

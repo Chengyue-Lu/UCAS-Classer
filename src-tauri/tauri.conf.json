@@ -30,7 +30,10 @@
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEFDOUFFQjgxREI1RDBCQ0EKUldUS0MxM2JnZXVhckp2T2dsOTN3NmJsZWhkZ0RFL25MUmVzcVVCbFVGd21KNDFSeEJxYXhpSmwK",
       "endpoints": [
         "https://github.com/Chengyue-Lu/UCAS-Classer/releases/latest/download/latest.json"
-      ]
+      ],
+      "windows": {
+        "installMode": "quiet"
+      }
     }
   }
 }

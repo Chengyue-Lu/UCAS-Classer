@@ -1,7 +1,13 @@
 import { writeFile } from 'node:fs/promises'
 import { request, type BrowserContext, type Page } from '@playwright/test'
 import { launchBrowser } from './browser.js'
-import { courseListUrl, looksLikeLoginUrl, portalUrl } from './config.js'
+import {
+  courseListUrl,
+  isAuthenticatedSepLandingUrl,
+  looksLikeLoginUrl,
+  portalUrl,
+  sepMoocBridgeUrl,
+} from './config.js'
 import { authPaths, ensureAuthDirs } from './paths.js'
 import { writeArtifacts } from './utils.js'
 
@@ -11,6 +17,14 @@ const LOGIN_POLL_INTERVAL_MS = 1000
 
 type LandingKind = 'portal' | 'courseList'
 type RuntimeStorageState = Awaited<ReturnType<BrowserContext['storageState']>>
+type CourseListVerification = {
+  authenticated: boolean
+  url: string
+  title: string | null
+  status: number
+  cookieCount: number
+  cookieDomains: string[]
+}
 
 async function main() {
   await ensureAuthDirs()
@@ -99,6 +113,9 @@ async function waitForSavableStorageState(
   }
 }> {
   const deadline = Date.now() + LOGIN_WAIT_TIMEOUT_MS
+  let sepBridgeAttempted = false
+  let lastPageUrl: string | null = null
+  let lastVerification: CourseListVerification | null = null
 
   while (Date.now() < deadline) {
     if (!context.browser()?.isConnected()) {
@@ -111,21 +128,42 @@ async function waitForSavableStorageState(
       continue
     }
 
+    lastPageUrl = page.url()
+
     const storageState = await context.storageState().catch(() => null)
     if (!storageState) {
       await sleep(LOGIN_POLL_INTERVAL_MS)
       continue
     }
 
-    const verification = await verifyCourseListState(storageState)
+    const verificationResult = await verifyCourseListState(storageState)
+    const verification = verificationResult.verification
+    lastVerification = verification
     if (verification.authenticated) {
       return {
         kind: detectLandingKind(page),
         page,
         url: page.url(),
         title: await safeTitle(page),
-        storageState,
+        storageState: verificationResult.storageState,
         verification,
+      }
+    }
+
+    if (!sepBridgeAttempted && isAuthenticatedSepLandingUrl(page.url())) {
+      sepBridgeAttempted = true
+      console.log(`Detected authenticated SEP landing: ${page.url()}`)
+      console.log('Opening UCAS Online through the current SEP SSO bridge...')
+
+      try {
+        await page.goto(sepMoocBridgeUrl, {
+          waitUntil: 'domcontentloaded',
+          timeout: 60_000,
+        })
+      } catch (error) {
+        console.warn(
+          `SEP SSO bridge navigation did not finish cleanly: ${formatError(error)}`,
+        )
       }
     }
 
@@ -133,11 +171,22 @@ async function waitForSavableStorageState(
   }
 
   throw new Error(
-    `Timed out waiting for a savable authenticated storageState after ${LOGIN_WAIT_TIMEOUT_MS / 1000}s.`,
+    [
+      `Timed out waiting for a savable authenticated storageState after ${LOGIN_WAIT_TIMEOUT_MS / 1000}s.`,
+      `Last browser URL: ${lastPageUrl ?? '(unavailable)'}.`,
+      lastVerification
+        ? `Last course-list verification: status=${lastVerification.status}, url=${lastVerification.url}, authenticated=${lastVerification.authenticated}.`
+        : 'Course-list verification did not complete.',
+    ].join(' '),
   )
 }
 
-async function verifyCourseListState(storageState: RuntimeStorageState) {
+async function verifyCourseListState(
+  storageState: RuntimeStorageState,
+): Promise<{
+  storageState: RuntimeStorageState
+  verification: CourseListVerification
+}> {
   const apiContext = await request.newContext({
     storageState,
     ignoreHTTPSErrors: true,
@@ -160,12 +209,15 @@ async function verifyCourseListState(storageState: RuntimeStorageState) {
       !bodyText.includes('/passport/login')
 
     return {
-      authenticated,
-      url,
-      title,
-      status: response.status(),
-      cookieCount: cookies.length,
-      cookieDomains,
+      storageState: refreshedStorageState,
+      verification: {
+        authenticated,
+        url,
+        title,
+        status: response.status(),
+        cookieCount: cookies.length,
+        cookieDomains,
+      },
     }
   } finally {
     await apiContext.dispose()
@@ -191,6 +243,10 @@ async function safeTitle(page: Page): Promise<string | null> {
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function formatError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
 }
 
 main().catch((error: unknown) => {

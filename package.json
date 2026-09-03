@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "check": "tsc -p tsconfig.scripts.json --noEmit",
+    "test:auth": "tsx --test automation/auth/*.test.ts",
     "auth:reset": "tsx automation/auth/reset.ts",
     "auth:open": "tsx automation/auth/login-and-save-sep.ts",
     "auth:login": "tsx automation/auth/login-and-save-sep.ts",

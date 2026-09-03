@@ -120,9 +120,7 @@ pub async fn install_app_update(app: AppHandle) -> Result<AppUpdateInstallResult
 
 fn current_release_notes() -> Vec<String> {
     vec![
-        "接入 GitHub Release 自动更新检测，发现新版本后可确认下载并安装。".to_string(),
-        "设置页新增检查更新与打开 GitHub 仓库入口。".to_string(),
-        "版本升级后会在应用内展示一次简短更新说明。".to_string(),
-        "未读红点状态改为更干净的 SQLite 两列模型，并会随成功导库清理。".to_string(),
+        "修复首次或新浏览器登录进入新版 SEP 工作台后，无法自动建立课程平台会话的问题。".to_string(),
+        "用户确认更新后改为静默安装并自动重启，减少安装过程中的额外窗口。".to_string(),
     ]
 }

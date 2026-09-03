@@ -1,6 +1,6 @@
 # UCAS Classer 交接文档
 
-更新时间：2026-04-30  
+更新时间：2026-09-03
 文档定位：当前项目的总交接入口。  
 阅读建议：先看本文，再按需打开 [program-map.md](/d:/lcy/ucasclasser-develop/docs/program-map.md)、[v1.1.x-v1.3.0-roadmap.md](/d:/lcy/ucasclasser-develop/docs/v1.1.x-v1.3.0-roadmap.md)、[package-runtime-sync.md](/d:/lcy/ucasclasser-develop/docs/package-runtime-sync.md)；历史背景可回看 [archive-completed/v1.0.1-v1.1.0progress.md](/d:/lcy/ucasclasser-develop/docs/archive-completed/v1.0.1-v1.1.0progress.md)。
 
@@ -10,9 +10,9 @@
 
 ## 2. 当前版本状态
 
-- 当前开发 / 打包基线：`v1.2.0`
-- 当前状态：`1.2.0` 属于自动更新、版本提醒、发布流程收口基线
-- 当前工作重点：自动更新发布链路验证、版本提醒体验、未读红点稳定性、打包同步与登录态稳定性跟踪
+- 当前开发 / 打包基线：`v1.2.1`
+- 当前状态：`1.2.1` 修复新版 SEP 首次登录桥接，并将确认后的更新安装改为静默模式
+- 当前工作重点：登录态稳定性、未读红点稳定性、作业详情体验与 `1.3.0` 课表 / 待办规划
 
 ## 3. 最近一轮有效变更
 
@@ -22,6 +22,8 @@
 - `check` 失败后不再急于 `reset` 本地旧登录态
 - 默认 cookie refresh 间隔已从 `720` 分钟调整为 `1440` 分钟
 - 登录成功后仍由新 `storage-state` 覆写旧状态，不依赖预先清空目录
+- 首次或新浏览器登录落到新版 SEP 工作台时，会自动补走“国科大在线” SSO 入口以建立 MOOC 会话
+- 验证码和设备验证仍保留人工完成，自动桥接只在已认证的 SEP 落地页触发
 
 ### 3.2 作业与详情
 
@@ -45,6 +47,7 @@
 - `content_read_state` 已收敛为 `identity_key + is_read` 两列；点击条目或托盘清除后标记已读，下一次成功导库会清理已读与已不存在条目
 - `1.2.0` 接入 Tauri 官方 updater，更新源为 GitHub Release 的 `latest.json`
 - 设置页新增“检查更新”和“打开 GitHub 仓库”；启动时自动检查更新，发现新版本后由用户确认下载并安装
+- `1.2.1` 起用户确认后使用当前用户级静默安装，并在完成后自动重启应用
 - 版本变化后首次启动会显示一次应用内简短更新说明
 
 ## 4. 当前稳定能力
@@ -171,7 +174,7 @@ cargo check --manifest-path src-tauri/Cargo.toml
 cd ucasclasser-package
 npm run tauri:build
 cd ..
-npx tauri signer sign --private-key-path (Resolve-Path "temp\ucas-classer-updater.key").Path --password= "ucasclasser-package\src-tauri\target\release\bundle\nsis\UCAS Classer_1.2.0_x64-setup.exe"
+npx tauri signer sign --private-key-path (Resolve-Path "temp\ucas-classer-updater.key").Path --password= "ucasclasser-package\src-tauri\target\release\bundle\nsis\UCAS Classer_1.2.1_x64-setup.exe"
 node scripts/generate-update-manifest.mjs --package-root=ucasclasser-package
 ```
 
