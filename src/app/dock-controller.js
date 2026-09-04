@@ -1,3 +1,10 @@
+const DOCK_COLLAPSE_DELAY_MS = 400
+const DOCK_RESIZE_SETTLE_MS = 900
+
+export function getDockCollapseDelay(now, resizeCooldownUntil) {
+  return Math.max(DOCK_COLLAPSE_DELAY_MS, resizeCooldownUntil - now)
+}
+
 // Keeps dock state synchronization isolated from the rest of the page logic.
 export function createDockController({
   appShell,
@@ -11,6 +18,10 @@ export function createDockController({
   let dockStatePollTimer = null
   let dockStateEventUnlisten = null
   let dockStateEventsAvailable = false
+  let dockActionInFlight = null
+  let dockResizeCooldownUntil = 0
+  let dockStateRefreshSequence = 0
+  let dockStateEventSequence = 0
 
   function clearDockStateEventSubscription() {
     if (typeof dockStateEventUnlisten === 'function') {
@@ -39,6 +50,7 @@ export function createDockController({
       enabled: Boolean(dockState?.enabled),
       state: dockState?.state || 'normal',
       side: dockState?.side || null,
+      transitioning: Boolean(dockState?.transitioning),
     }
   }
 
@@ -46,6 +58,7 @@ export function createDockController({
     const dockState = state.windowDock
     appShell.dataset.dockState = dockState.state || 'normal'
     appShell.dataset.dockSide = dockState.side || ''
+    appShell.dataset.dockTransition = dockState.transitioning ? 'true' : 'false'
     dockHandle.hidden = dockState.state !== 'collapsed'
   }
 
@@ -58,8 +71,9 @@ export function createDockController({
       closeDetailModal()
     }
 
-    if (nextDockState.state !== 'expanded') {
+    if (nextDockState.transitioning || nextDockState.state !== 'expanded') {
       clearDockCollapseTimer()
+      dockResizeCooldownUntil = 0
     }
   }
 
@@ -87,6 +101,8 @@ export function createDockController({
           return
         }
 
+        dockStateEventSequence += 1
+        dockStateRefreshSequence += 1
         applyWindowDockState(event.payload)
       })
 
@@ -108,6 +124,7 @@ export function createDockController({
         enabled: Boolean(state.settings.enableAutoDockCollapse),
         state: 'normal',
         side: null,
+        transitioning: false,
       }
     }
 
@@ -115,38 +132,106 @@ export function createDockController({
   }
 
   async function refreshWindowDockState() {
+    const refreshSequence = ++dockStateRefreshSequence
+    const eventSequence = dockStateEventSequence
     const dockState = await getWindowDockState()
+    if (
+      refreshSequence !== dockStateRefreshSequence ||
+      eventSequence !== dockStateEventSequence
+    ) {
+      return
+    }
     applyWindowDockState(dockState)
   }
 
-  async function expandDockedWindow() {
-    clearDockCollapseTimer()
-    await invokeTauriCommand('expand_docked_window')
-    if (!dockStateEventsAvailable) {
-      await refreshWindowDockState()
+  async function runDockAction(command) {
+    if (dockActionInFlight) {
+      return dockActionInFlight
     }
+
+    clearDockCollapseTimer()
+    const action = (async () => {
+      dockStateRefreshSequence += 1
+      state.windowDock = {
+        ...state.windowDock,
+        transitioning: true,
+      }
+      renderDockSurface()
+      await waitForDockTransitionPaint()
+      await invokeTauriCommand(command)
+      await refreshWindowDockState()
+    })()
+    dockActionInFlight = action
+
+    try {
+      await action
+    } catch (error) {
+      state.windowDock = {
+        ...state.windowDock,
+        transitioning: false,
+      }
+      renderDockSurface()
+      throw error
+    } finally {
+      if (dockActionInFlight === action) {
+        dockActionInFlight = null
+      }
+    }
+  }
+
+  async function expandDockedWindow() {
+    return runDockAction('expand_docked_window')
   }
 
   async function collapseDockedWindow() {
-    clearDockCollapseTimer()
-    await invokeTauriCommand('collapse_docked_window')
-    if (!dockStateEventsAvailable) {
-      await refreshWindowDockState()
-    }
+    return runDockAction('collapse_docked_window')
+  }
+
+  function isPointerWithinDockSurface() {
+    return typeof appShell.matches === 'function' && appShell.matches(':hover')
+  }
+
+  function waitForDockTransitionPaint() {
+    return new Promise((resolve) => {
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(resolve)
+      })
+    })
   }
 
   function scheduleDockCollapse() {
-    if (state.modalOpen || state.windowDock.state !== 'expanded') {
+    if (
+      state.modalOpen ||
+      state.windowDock.transitioning ||
+      state.windowDock.state !== 'expanded'
+    ) {
       return
     }
 
-    // The short delay prevents accidental collapse while the cursor is still
-    // crossing the window edge after an auto-expand.
+    // The base delay prevents accidental collapse while the cursor crosses the
+    // edge. Active resize gestures extend it so resizing cannot race a collapse.
     clearDockCollapseTimer()
+    const delay = getDockCollapseDelay(Date.now(), dockResizeCooldownUntil)
     dockCollapseTimer = window.setTimeout(() => {
       dockCollapseTimer = null
-      collapseDockedWindow()
-    }, 400)
+      if (
+        state.modalOpen ||
+        state.windowDock.transitioning ||
+        state.windowDock.state !== 'expanded'
+      ) {
+        return
+      }
+      if (Date.now() < dockResizeCooldownUntil) {
+        scheduleDockCollapse()
+        return
+      }
+      if (isPointerWithinDockSurface()) {
+        return
+      }
+      void collapseDockedWindow().catch((error) => {
+        console.warn('Failed to collapse docked window', error)
+      })
+    }, delay)
   }
 
   function bindDockInteractions() {
@@ -156,7 +241,9 @@ export function createDockController({
 
     dockHandle.addEventListener('mouseenter', () => {
       if (state.windowDock.state === 'collapsed') {
-        expandDockedWindow()
+        void expandDockedWindow().catch((error) => {
+          console.warn('Failed to expand docked window', error)
+        })
       }
     })
 
@@ -166,6 +253,18 @@ export function createDockController({
 
     appShell.addEventListener('mouseleave', (event) => {
       if (event.relatedTarget === null) {
+        scheduleDockCollapse()
+      }
+    })
+
+    window.addEventListener('resize', () => {
+      if (state.windowDock.transitioning || state.windowDock.state !== 'expanded') {
+        return
+      }
+
+      dockResizeCooldownUntil = Date.now() + DOCK_RESIZE_SETTLE_MS
+      clearDockCollapseTimer()
+      if (!isPointerWithinDockSurface()) {
         scheduleDockCollapse()
       }
     })

@@ -311,6 +311,10 @@ export function createSettingsController({
     const settingsForm = document.createElement('div')
     settingsForm.className = 'settings-form'
 
+    const sepUsernameField = createSettingsField('SEP 用户名（明文）', state.settings.sepUsername, {
+      fieldName: 'sepUsername',
+      placeholder: '仅用于登录页自动填充，不保存密码',
+    })
     const downloadField = createSettingsField('下载目录', state.settings.downloadDir, {
       fieldName: 'downloadDir',
       placeholder: '例如: D:\\Downloads\\UCAS Classer',
@@ -504,6 +508,7 @@ export function createSettingsController({
     settingsHint.textContent = '所有时间设置单位均为分钟。课程分目录会在主下载目录下生效。'
 
     settingsForm.append(
+      sepUsernameField.field,
       downloadField.field,
       downloadActionRow,
       releaseActionRow,
@@ -520,6 +525,7 @@ export function createSettingsController({
           try {
             const saved = await saveSettingsPatch(
               {
+                sepUsername: sepUsernameField.control.value.trim(),
                 downloadDir: downloadField.control.value.trim(),
                 enableAutoDockCollapse: dockEnabled,
                 courseScope: state.settings.courseScope || selectedScope,

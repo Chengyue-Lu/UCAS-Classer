@@ -13,6 +13,9 @@ const runtimeRoot = resolveEnvPath('UCAS_RUNTIME_ROOT') ?? process.cwd()
 const dataRoot = resolveEnvPath('UCAS_DATA_ROOT') ?? resolve(runtimeRoot, 'data')
 const configRoot = resolveEnvPath('UCAS_CONFIG_ROOT') ?? runtimeRoot
 const cacheDir = resolveEnvPath('UCAS_CACHE_DIR') ?? resolve(dataRoot, 'cache')
+const browserProfileRoot =
+  resolveEnvPath('UCAS_BROWSER_PROFILE_DIR') ??
+  resolve(cacheDir, '..', 'login-browser-profile')
 
 export function getRuntimeRoot(): string {
   return runtimeRoot
@@ -44,4 +47,8 @@ export function getCacheDir(): string {
 
 export function resolveCachePath(...parts: string[]): string {
   return resolve(cacheDir, ...parts)
+}
+
+export function getBrowserProfileRoot(): string {
+  return browserProfileRoot
 }

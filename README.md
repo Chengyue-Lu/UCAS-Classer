@@ -11,7 +11,7 @@
   <p>
     <img src="https://img.shields.io/badge/Platform-Windows-0078D6?logo=windows&logoColor=white" alt="Platform" />
     <img src="https://img.shields.io/badge/Tauri-App-FFC131?logo=tauri&logoColor=white" alt="Tauri" />
-    <img src="https://img.shields.io/badge/Baseline-1.2.1-2f855a" alt="Baseline" />
+    <img src="https://img.shields.io/badge/Baseline-1.2.2-2f855a" alt="Baseline" />
   </p>
 
   <p><em>更快看到课程、通知、资料和作业，把常用操作收进一个更顺手的小界面。</em></p>
@@ -38,10 +38,11 @@
 
 ## 版本状态
 
-- 当前发布基线：`1.2.1`
+- 当前发布基线：`1.2.2`
 - `1.1.x` 主线：作业详情与稳定性维护。
 - `1.2.0` 主线：自动更新、应用内版本提醒、发布流程收口。
 - `1.2.1` 修复：新版 SEP 首次登录桥接与静默更新安装。
+- `1.2.2` 修复：持久化登录环境、窗口侧收稳定性与界面细节。
 - `1.3.0` 规划：课表与待办整合。
 
 ## 仓库结构
@@ -72,7 +73,7 @@ npm run check
 cargo check --manifest-path src-tauri/Cargo.toml
 npm run tauri:build
 cd ..
-npx tauri signer sign --private-key-path (Resolve-Path "temp\ucas-classer-updater.key").Path --password= "ucasclasser-package\src-tauri\target\release\bundle\nsis\UCAS Classer_1.2.1_x64-setup.exe"
+npx tauri signer sign --private-key-path (Resolve-Path "temp\ucas-classer-updater.key").Path --password= "ucasclasser-package\src-tauri\target\release\bundle\nsis\UCAS Classer_1.2.2_x64-setup.exe"
 node scripts/generate-update-manifest.mjs --package-root=ucasclasser-package
 ```
 

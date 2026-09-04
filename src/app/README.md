@@ -27,7 +27,7 @@
   - 路径安全规则集中在这里，不要在业务代码里重复实现。
 
 - `src/app/dock-controller.js`
-  - dock 状态同步与 hover 收回行为。
+  - dock 状态同步、转换互斥、resize 冷却与 hover 收回行为。
   - 主源是 Rust 侧 `dock-state-changed` 事件，轮询只是兜底。
 
 - `src/app/settings-save.js`

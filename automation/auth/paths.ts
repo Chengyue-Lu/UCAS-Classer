@@ -1,7 +1,10 @@
 import { access, cp, mkdir, readdir } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { resolveDataPath } from '../../shared/runtime-paths.js'
+import {
+  getBrowserProfileRoot,
+  resolveDataPath,
+} from '../../shared/runtime-paths.js'
 
 const currentDir = dirname(fileURLToPath(import.meta.url))
 const legacyDataDir = resolve(currentDir, 'data')
@@ -15,11 +18,14 @@ export const authPaths = {
   artifactsDir: resolveDataPath('auth', 'artifacts'),
   storageStateFile: resolveDataPath('auth', 'storage-state.json'),
   metadataFile: resolveDataPath('auth', 'login-metadata.json'),
+  appSettingsFile: resolveDataPath('app-settings.json'),
+  browserProfileRootDir: getBrowserProfileRoot(),
 }
 
 export async function ensureAuthDirs() {
   await mkdir(authPaths.dataDir, { recursive: true })
   await mkdir(authPaths.artifactsDir, { recursive: true })
+  await mkdir(authPaths.browserProfileRootDir, { recursive: true })
   await migrateLegacyAuthData()
 }
 

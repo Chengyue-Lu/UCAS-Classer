@@ -1,14 +1,14 @@
 import { formatCount } from './formatters.js'
 
 // Owns course-card rendering and the small paging/overflow behaviors inside it.
-function createInlineStat(label, count) {
+function createInlineStat(label, value, formatter = formatCount) {
   const stat = document.createElement('span')
   stat.className = 'course-card__inline-stat'
   stat.append(
     document.createTextNode(`${label}(`),
     Object.assign(document.createElement('span'), {
       className: 'course-card__inline-value',
-      textContent: formatCount(count),
+      textContent: formatter(value),
     }),
     document.createTextNode(')'),
   )
@@ -129,6 +129,13 @@ function summarizeAssignments(courses) {
 function formatAssignmentOverview(courses) {
   const summary = summarizeAssignments(courses)
   return `${courses.length} courses · 未交 ${formatCount(summary.unsubmitted)} / 总 ${formatCount(summary.total)}`
+}
+
+export function formatAssignmentProgress(assignments) {
+  const summary = summarizeAssignments([
+    { assignments: Array.isArray(assignments) ? assignments : [] },
+  ])
+  return `${formatCount(summary.unfinished)}/${formatCount(summary.total)}`
 }
 
 export function createCourseRenderer({
@@ -403,7 +410,7 @@ export function createCourseRenderer({
     summaryStats.append(
       createInlineStat('通知', course.noticeCount),
       createInlineStat('资料', course.materialCount),
-      createInlineStat('作业', course.assignmentCount),
+      createInlineStat('作业', course.assignments, formatAssignmentProgress),
     )
 
     const chevron = document.createElement('span')

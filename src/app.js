@@ -1,6 +1,7 @@
 import {
   getErrorMessage,
   getTauriEventListen,
+  invokeNullableTauriCommand,
   invokeRequiredTauriCommand,
   invokeTauriCommand,
   waitForTauriInvoke,
@@ -62,6 +63,7 @@ const state = {
     courses: [],
   },
   settings: {
+    sepUsername: '',
     downloadDir: '',
     courseScope: 'all',
     courseDownloadSubdirs: {},
@@ -88,6 +90,7 @@ const state = {
     enabled: false,
     state: 'normal',
     side: null,
+    transitioning: false,
   },
 }
 
@@ -309,13 +312,11 @@ function syncSettingsMeta(settings) {
 }
 
 async function pickFolderPath(initialPath = '') {
-  const selectedPath = await invokeTauriCommand('pick_folder_path', {
-    initialPath: initialPath || null,
-  })
-
-  if (selectedPath === null) {
-    throw new Error('当前环境不支持系统目录选择器。')
-  }
+  const selectedPath = await invokeNullableTauriCommand(
+    'pick_folder_path',
+    { initialPath: initialPath || null },
+    '当前环境不支持系统目录选择器。',
+  )
 
   return typeof selectedPath === 'string' ? selectedPath : ''
 }

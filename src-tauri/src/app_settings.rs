@@ -15,6 +15,7 @@ const DEFAULT_COOKIE_REFRESH_INTERVAL_SECS: u64 = 1440 * 60;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct AppSettings {
+    pub sep_username: String,
     pub download_dir: String,
     pub course_scope: String,
     pub course_download_subdirs: std::collections::BTreeMap<String, String>,
@@ -38,6 +39,7 @@ pub struct AppSettings {
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
+            sep_username: String::new(),
             download_dir: default_download_dir().display().to_string(),
             course_scope: "all".to_string(),
             course_download_subdirs: std::collections::BTreeMap::new(),
@@ -102,6 +104,8 @@ pub fn persist_runtime_markers(
 }
 
 fn normalize_settings(settings: &mut AppSettings) {
+    settings.sep_username = settings.sep_username.trim().to_string();
+
     let trimmed_download_dir = settings.download_dir.trim();
     settings.download_dir = if trimmed_download_dir.is_empty() {
         default_download_dir().display().to_string()
@@ -230,4 +234,23 @@ fn write_app_settings(settings: &AppSettings) -> Result<(), String> {
     })?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalizes_sep_username_without_adding_a_password_field() {
+        let mut settings = AppSettings::default();
+        settings.sep_username = "  sample-user  ".to_string();
+
+        normalize_settings(&mut settings);
+
+        assert_eq!(settings.sep_username, "sample-user");
+        let serialized = serde_json::to_value(settings).expect("settings should serialize");
+        assert_eq!(serialized["sepUsername"], "sample-user");
+        assert!(serialized.get("password").is_none());
+        assert!(serialized.get("sepPassword").is_none());
+    }
 }

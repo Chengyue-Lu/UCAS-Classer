@@ -109,7 +109,7 @@ npm run tauri:build
 - GitHub 会把上传资源文件名里的空格规范化为点号；manifest 生成脚本默认按该公开文件名写入 URL
 - 发布后必须实际请求 `releases/latest/download/latest.json` 以及其中的安装包 URL，确认两者均返回成功后再验收 updater
 - 如果 `tauri build` 在自动签名阶段卡住，使用主仓命令手动签名：
-  `npx tauri signer sign --private-key-path (Resolve-Path "temp\ucas-classer-updater.key").Path --password= "ucasclasser-package\src-tauri\target\release\bundle\nsis\UCAS Classer_1.2.1_x64-setup.exe"`
+  `npx tauri signer sign --private-key-path (Resolve-Path "temp\ucas-classer-updater.key").Path --password= "ucasclasser-package\src-tauri\target\release\bundle\nsis\UCAS Classer_1.2.2_x64-setup.exe"`
 - 生成 manifest：
   `node scripts/generate-update-manifest.mjs --package-root=ucasclasser-package`
 

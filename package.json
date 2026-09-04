@@ -6,7 +6,10 @@
   "scripts": {
     "check": "tsc -p tsconfig.scripts.json --noEmit",
     "test:auth": "tsx --test automation/auth/*.test.ts",
+    "test:dock": "node --test src/__tests__/dock-controller.test.js",
+    "test:ui": "node --test src/__tests__/*.test.js",
     "auth:reset": "tsx automation/auth/reset.ts",
+    "auth:reset-browser": "tsx automation/auth/reset-browser-profile.ts",
     "auth:open": "tsx automation/auth/login-and-save-sep.ts",
     "auth:login": "tsx automation/auth/login-and-save-sep.ts",
     "auth:check": "tsx automation/auth/check-api.ts",

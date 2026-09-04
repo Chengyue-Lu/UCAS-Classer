@@ -1,6 +1,6 @@
 // Small pure formatters shared by UI renderers and settings controllers.
 function formatCount(value) {
-  return String(Number(value) || 0).padStart(2, '0')
+  return String(Number(value) || 0)
 }
 
 function intervalSecsToMinutes(value, fallbackMinutes) {

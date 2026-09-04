@@ -51,6 +51,19 @@ async function invokeRequiredTauriCommand(
   return result
 }
 
+async function invokeNullableTauriCommand(
+  command,
+  args = {},
+  missingBridgeMessage = DEFAULT_BRIDGE_ERROR_MESSAGE,
+) {
+  const invoke = getTauriInvoke()
+  if (!invoke) {
+    throw createBridgeUnavailableError(missingBridgeMessage)
+  }
+
+  return invoke(command, args)
+}
+
 async function waitForTauriInvoke(timeoutMs = 4000) {
   const startedAt = Date.now()
 
@@ -74,6 +87,7 @@ export {
   getErrorMessage,
   getTauriEventListen,
   getTauriInvoke,
+  invokeNullableTauriCommand,
   invokeRequiredTauriCommand,
   invokeTauriCommand,
   waitForTauriInvoke,

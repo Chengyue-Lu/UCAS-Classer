@@ -120,7 +120,9 @@ pub async fn install_app_update(app: AppHandle) -> Result<AppUpdateInstallResult
 
 fn current_release_notes() -> Vec<String> {
     vec![
-        "修复首次或新浏览器登录进入新版 SEP 工作台后，无法自动建立课程平台会话的问题。".to_string(),
-        "用户确认更新后改为静默安装并自动重启，减少安装过程中的额外窗口。".to_string(),
+        "登录改用专用的持久化浏览器环境，并支持保存和自动填充 SEP 用户名。".to_string(),
+        "优化窗口侧收状态、尺寸边界与过渡动画，减少缩放和自动收回冲突。".to_string(),
+        "调整课程统计、作业进度与空状态展示，使信息更紧凑直观。".to_string(),
+        "关闭或取消文件夹选择时不再显示错误提示。".to_string(),
     ]
 }

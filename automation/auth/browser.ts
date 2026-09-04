@@ -1,10 +1,12 @@
 import { chromium } from '@playwright/test'
-import { access } from 'node:fs/promises'
+import { access, mkdir } from 'node:fs/promises'
 import { execFile } from 'node:child_process'
+import { resolve } from 'node:path'
 import { promisify } from 'node:util'
 
 type BrowserLaunchTarget = {
   label: string
+  profileName: string
   channel?: 'msedge' | 'chrome'
   executablePath?: string
 }
@@ -12,6 +14,12 @@ type BrowserLaunchTarget = {
 export type BrowserLaunchResult = {
   browser: Awaited<ReturnType<typeof chromium.launch>>
   browserChannel: string
+}
+
+export type PersistentBrowserLaunchResult = {
+  context: Awaited<ReturnType<typeof chromium.launchPersistentContext>>
+  browserChannel: string
+  browserProfileDir: string
 }
 
 const execFileAsync = promisify(execFile)
@@ -59,13 +67,24 @@ async function resolveLaunchTargets(): Promise<BrowserLaunchTarget[]> {
 
   return [
     edgeOnPath
-      ? { label: 'Microsoft Edge', executablePath: edgeOnPath }
-      : { label: 'Microsoft Edge', channel: 'msedge' },
+      ? { label: 'Microsoft Edge', profileName: 'edge', executablePath: edgeOnPath }
+      : { label: 'Microsoft Edge', profileName: 'edge', channel: 'msedge' },
     chromeOnPath
-      ? { label: 'Google Chrome', executablePath: chromeOnPath }
-      : { label: 'Google Chrome', channel: 'chrome' },
-    { label: 'Playwright Chromium' },
+      ? { label: 'Google Chrome', profileName: 'chrome', executablePath: chromeOnPath }
+      : { label: 'Google Chrome', profileName: 'chrome', channel: 'chrome' },
+    { label: 'Playwright Chromium', profileName: 'playwright-chromium' },
   ]
+}
+
+export function browserProfileDirFor(rootDir: string, profileName: string): string {
+  return resolve(rootDir, profileName)
+}
+
+export function isBrowserProfileInUseError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return /ProcessSingleton|SingletonLock|user data directory is already in use|Opening in existing browser session/i.test(
+    message,
+  )
 }
 
 export async function launchBrowser(
@@ -96,4 +115,49 @@ export async function launchBrowser(
   }
 
   throw new Error('Unable to launch a browser')
+}
+
+export async function launchPersistentBrowserContext(
+  profileRootDir: string,
+  headless = false,
+): Promise<PersistentBrowserLaunchResult> {
+  const targets = await resolveLaunchTargets()
+  await mkdir(profileRootDir, { recursive: true })
+
+  for (const target of targets) {
+    const browserProfileDir = browserProfileDirFor(
+      profileRootDir,
+      target.profileName,
+    )
+
+    try {
+      const context = await chromium.launchPersistentContext(browserProfileDir, {
+        headless,
+        ...(target.executablePath
+          ? { executablePath: target.executablePath }
+          : target.channel
+            ? { channel: target.channel }
+            : {}),
+      })
+
+      return {
+        context,
+        browserChannel: target.label,
+        browserProfileDir,
+      }
+    } catch (error) {
+      if (isBrowserProfileInUseError(error)) {
+        throw new Error(
+          `The UCAS Classer ${target.label} login profile is already in use. Close the existing login window and try again.`,
+          { cause: error },
+        )
+      }
+
+      if (target.label === 'Playwright Chromium') {
+        throw error
+      }
+    }
+  }
+
+  throw new Error('Unable to launch a persistent browser context')
 }

@@ -20,6 +20,7 @@ const sharedFiles = [
   'automation/auth/check-api.ts',
   'automation/auth/config.ts',
   'automation/auth/login-and-save-sep.ts',
+  'automation/auth/login-page.ts',
   'automation/auth/open-authenticated-url.ts',
   'automation/auth/paths.ts',
   'automation/auth/reset.ts',

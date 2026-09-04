@@ -1,6 +1,6 @@
 import { writeFile } from 'node:fs/promises'
 import { request, type BrowserContext, type Page } from '@playwright/test'
-import { launchBrowser } from './browser.js'
+import { launchPersistentBrowserContext } from './browser.js'
 import {
   courseListUrl,
   isAuthenticatedSepLandingUrl,
@@ -9,6 +9,7 @@ import {
   sepMoocBridgeUrl,
 } from './config.js'
 import { authPaths, ensureAuthDirs } from './paths.js'
+import { loadSavedSepUsername, prepareLoginPage } from './login-page.js'
 import { writeArtifacts } from './utils.js'
 
 const directSepLoginUrl = 'https://sep.ucas.ac.cn/d_index/Z2tkenhfbG9jYWw=/'
@@ -29,14 +30,22 @@ type CourseListVerification = {
 async function main() {
   await ensureAuthDirs()
 
-  const { browser, browserChannel } = await launchBrowser(false)
-  const context = await browser.newContext()
-  const page = await context.newPage()
+  const { context, browserChannel, browserProfileDir } =
+    await launchPersistentBrowserContext(
+      authPaths.browserProfileRootDir,
+      false,
+    )
+  const page = context.pages()[0] ?? (await context.newPage())
 
   try {
     await page.goto(directSepLoginUrl, { waitUntil: 'domcontentloaded' })
+    const sepUsername = await loadSavedSepUsername(authPaths.appSettingsFile)
+    const loginPage = await prepareLoginPage(page, sepUsername)
 
     console.log(`Browser: ${browserChannel}`)
+    console.log(`Dedicated browser profile: ${browserProfileDir}`)
+    console.log(`Saved username filled: ${loginPage.usernameFilled ? 'yes' : 'no'}`)
+    console.log(`SEP captcha detected: ${loginPage.captchaRequired ? 'yes' : 'no'}`)
     console.log(`Entry: ${directSepLoginUrl}`)
     console.log(`Portal: ${portalUrl}`)
     console.log(`Target: ${courseListUrl}`)
@@ -60,6 +69,10 @@ async function main() {
           savedAt: new Date().toISOString(),
           source: 'sep',
           browserChannel,
+          browserProfileDir,
+          savedUsernameFilled: loginPage.usernameFilled,
+          sepCaptchaRequired: loginPage.captchaRequired,
+          loginPagePreparationReason: loginPage.reason,
           openedUrl: directSepLoginUrl,
           landedKind: landing.kind,
           landedUrl: landing.url,
@@ -80,6 +93,8 @@ async function main() {
         {
           storageStateFile: authPaths.storageStateFile,
           metadataFile: authPaths.metadataFile,
+          savedUsernameFilled: loginPage.usernameFilled,
+          sepCaptchaRequired: loginPage.captchaRequired,
           landedKind: landing.kind,
           landedUrl: landing.url,
           verifiedCourseList: landing.verification,
@@ -91,7 +106,6 @@ async function main() {
     )
   } finally {
     await context.close().catch(() => {})
-    await browser.close().catch(() => {})
   }
 }
 

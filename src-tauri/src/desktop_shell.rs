@@ -25,13 +25,15 @@ use ucas_classer::content_state::{
 
 const DEFAULT_WINDOW_WIDTH: u32 = 480;
 const DEFAULT_WINDOW_HEIGHT: u32 = 720;
+const MAX_WINDOW_WIDTH: u32 = 720;
+const MAX_WINDOW_HEIGHT: u32 = 960;
 const DOCK_STRIP_WIDTH: u32 = 56;
 const DOCK_STRIP_HEIGHT: u32 = 188;
 const DOCK_EDGE_THRESHOLD: i32 = 28;
 const DOCK_CHECK_DELAY_MS: u64 = 520;
 const MOVE_SUPPRESSION_MS: u64 = 420;
-const WINDOW_ANIMATION_STEPS: i32 = 10;
-const WINDOW_ANIMATION_STEP_MS: u64 = 16;
+const WINDOW_ANIMATION_STEPS: i32 = 12;
+const WINDOW_ANIMATION_STEP_MS: u64 = 14;
 const DOCK_STATE_EVENT: &str = "dock-state-changed";
 const CONTENT_UNREAD_CHANGED_EVENT: &str = "content-unread-changed";
 
@@ -77,6 +79,18 @@ impl DockVisualState {
     }
 }
 
+fn should_enter_dock_mode(state: DockVisualState) -> bool {
+    state != DockVisualState::Collapsed
+}
+
+fn should_expand_dock_mode(state: DockVisualState) -> bool {
+    state == DockVisualState::Collapsed
+}
+
+fn should_collapse_dock_mode(state: DockVisualState) -> bool {
+    state == DockVisualState::Expanded
+}
+
 #[derive(Default)]
 pub struct DockManager(Mutex<DockRuntimeState>);
 
@@ -86,6 +100,7 @@ struct DockRuntimeState {
     side: Option<DockSide>,
     geometry_token: u64,
     suppress_moved_until_ms: u64,
+    transition_in_progress: bool,
 }
 
 impl Default for DockRuntimeState {
@@ -95,6 +110,7 @@ impl Default for DockRuntimeState {
             side: None,
             geometry_token: 0,
             suppress_moved_until_ms: 0,
+            transition_in_progress: false,
         }
     }
 }
@@ -105,6 +121,7 @@ pub struct WindowDockSnapshot {
     enabled: bool,
     state: String,
     side: Option<String>,
+    transitioning: bool,
 }
 
 // The front-end listens for this snapshot and treats it as the single
@@ -116,6 +133,7 @@ fn build_window_dock_snapshot(app: &AppHandle) -> WindowDockSnapshot {
         enabled: settings.enable_auto_dock_collapse,
         state: state.as_str().to_string(),
         side: side.map(|value| value.as_str().to_string()),
+        transitioning: is_dock_transition_in_progress(app),
     }
 }
 
@@ -135,17 +153,24 @@ fn default_expanded_size() -> PhysicalSize<u32> {
     PhysicalSize::new(DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT)
 }
 
-fn normalized_expanded_size(settings: &AppSettings) -> PhysicalSize<u32> {
+fn maximum_expanded_size() -> PhysicalSize<u32> {
+    PhysicalSize::new(MAX_WINDOW_WIDTH, MAX_WINDOW_HEIGHT)
+}
+
+fn clamp_expanded_size(size: PhysicalSize<u32>) -> PhysicalSize<u32> {
     PhysicalSize::new(
-        settings
-            .dock_expanded_width
-            .unwrap_or(DEFAULT_WINDOW_WIDTH)
-            .max(DEFAULT_WINDOW_WIDTH),
+        size.width.clamp(DEFAULT_WINDOW_WIDTH, MAX_WINDOW_WIDTH),
+        size.height.clamp(DEFAULT_WINDOW_HEIGHT, MAX_WINDOW_HEIGHT),
+    )
+}
+
+fn normalized_expanded_size(settings: &AppSettings) -> PhysicalSize<u32> {
+    clamp_expanded_size(PhysicalSize::new(
+        settings.dock_expanded_width.unwrap_or(DEFAULT_WINDOW_WIDTH),
         settings
             .dock_expanded_height
-            .unwrap_or(DEFAULT_WINDOW_HEIGHT)
-            .max(DEFAULT_WINDOW_HEIGHT),
-    )
+            .unwrap_or(DEFAULT_WINDOW_HEIGHT),
+    ))
 }
 
 fn load_settings_fallback() -> AppSettings {
@@ -176,6 +201,37 @@ fn set_move_suppression(app: &AppHandle, duration_ms: u64) -> Result<(), String>
 
 fn is_move_suppressed(app: &AppHandle) -> bool {
     with_dock_state(app, |state| state.suppress_moved_until_ms > now_ms()).unwrap_or(false)
+}
+
+fn is_dock_transition_in_progress(app: &AppHandle) -> bool {
+    with_dock_state(app, |state| state.transition_in_progress).unwrap_or(false)
+}
+
+fn run_dock_transition(
+    app: &AppHandle,
+    operation: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
+    let started = with_dock_state(app, |state| {
+        if state.transition_in_progress {
+            return false;
+        }
+        state.transition_in_progress = true;
+        true
+    })?;
+
+    if !started {
+        return Ok(());
+    }
+
+    let result = emit_dock_state(app).and_then(|_| operation());
+    let finish_result = with_dock_state(app, |state| {
+        state.transition_in_progress = false;
+    });
+    let emit_result = emit_dock_state(app);
+
+    result?;
+    finish_result?;
+    emit_result
 }
 
 fn next_geometry_token(app: &AppHandle) -> Result<u64, String> {
@@ -292,11 +348,11 @@ fn persist_normal_geometry(
     settings: &mut AppSettings,
 ) -> Result<(), String> {
     let position = window.outer_position().map_err(|error| error.to_string())?;
-    let size = window.inner_size().map_err(|error| error.to_string())?;
+    let size = clamp_expanded_size(window.inner_size().map_err(|error| error.to_string())?);
     settings.dock_last_x = Some(position.x);
     settings.dock_last_y = Some(position.y);
-    settings.dock_expanded_width = Some(size.width.max(DEFAULT_WINDOW_WIDTH));
-    settings.dock_expanded_height = Some(size.height.max(DEFAULT_WINDOW_HEIGHT));
+    settings.dock_expanded_width = Some(size.width);
+    settings.dock_expanded_height = Some(size.height);
     Ok(())
 }
 
@@ -309,8 +365,21 @@ fn should_skip_geometry_tracking(window: &WebviewWindow) -> Result<bool, String>
     Ok(!is_visible)
 }
 
-fn is_dock_strip_size(size: PhysicalSize<u32>) -> bool {
-    size.width == DOCK_STRIP_WIDTH && size.height == DOCK_STRIP_HEIGHT
+fn apply_window_constraints(
+    window: &WebviewWindow,
+    min_size: Option<PhysicalSize<u32>>,
+    max_size: Option<PhysicalSize<u32>>,
+    resizable: bool,
+) -> Result<(), String> {
+    window
+        .set_min_size(min_size.map(Size::Physical))
+        .map_err(|error| error.to_string())?;
+    window
+        .set_max_size(max_size.map(Size::Physical))
+        .map_err(|error| error.to_string())?;
+    window
+        .set_resizable(resizable)
+        .map_err(|error| error.to_string())
 }
 
 fn set_window_rect(
@@ -319,58 +388,69 @@ fn set_window_rect(
     size: PhysicalSize<u32>,
     position: PhysicalPosition<i32>,
     min_size: Option<PhysicalSize<u32>>,
+    max_size: Option<PhysicalSize<u32>>,
+    resizable: bool,
 ) -> Result<(), String> {
     set_move_suppression(app, MOVE_SUPPRESSION_MS)?;
-    window
-        .set_min_size(None::<Size>)
-        .map_err(|error| error.to_string())?;
-    let start_position = window.outer_position().map_err(|error| error.to_string())?;
-    let start_size = window.inner_size().map_err(|error| error.to_string())?;
 
-    // Avoid animating to or from the thin strip size. A direct jump looks
-    // cleaner there than interpolating through awkward intermediate bars.
-    if !is_dock_strip_size(start_size) && !is_dock_strip_size(size) {
-        for step in 1..=WINDOW_ANIMATION_STEPS {
-            let progress = step as f32 / WINDOW_ANIMATION_STEPS as f32;
-            let eased = 1.0 - (1.0 - progress).powi(3);
-            let next_width =
-                start_size.width as f32 + (size.width as f32 - start_size.width as f32) * eased;
-            let next_height =
-                start_size.height as f32 + (size.height as f32 - start_size.height as f32) * eased;
-            let next_x =
-                start_position.x as f32 + (position.x as f32 - start_position.x as f32) * eased;
-            let next_y =
-                start_position.y as f32 + (position.y as f32 - start_position.y as f32) * eased;
+    let geometry_result = (|| -> Result<(), String> {
+        window
+            .set_resizable(false)
+            .map_err(|error| error.to_string())?;
+        window
+            .set_min_size(None::<Size>)
+            .map_err(|error| error.to_string())?;
+        window
+            .set_max_size(None::<Size>)
+            .map_err(|error| error.to_string())?;
 
-            window
-                .set_size(Size::Physical(PhysicalSize::new(
-                    next_width.round().max(1.0) as u32,
-                    next_height.round().max(1.0) as u32,
-                )))
-                .map_err(|error| error.to_string())?;
-            window
-                .set_position(Position::Physical(PhysicalPosition::new(
-                    next_x.round() as i32,
-                    next_y.round() as i32,
-                )))
-                .map_err(|error| error.to_string())?;
+        let start_position = window.outer_position().map_err(|error| error.to_string())?;
+        let start_size = window.inner_size().map_err(|error| error.to_string())?;
 
-            if step < WINDOW_ANIMATION_STEPS {
-                std::thread::sleep(Duration::from_millis(WINDOW_ANIMATION_STEP_MS));
+        if start_position != position || start_size != size {
+            for step in 1..=WINDOW_ANIMATION_STEPS {
+                let progress = step as f32 / WINDOW_ANIMATION_STEPS as f32;
+                let eased = progress * progress * (3.0 - 2.0 * progress);
+                let next_width =
+                    start_size.width as f32 + (size.width as f32 - start_size.width as f32) * eased;
+                let next_height = start_size.height as f32
+                    + (size.height as f32 - start_size.height as f32) * eased;
+                let next_x =
+                    start_position.x as f32 + (position.x as f32 - start_position.x as f32) * eased;
+                let next_y =
+                    start_position.y as f32 + (position.y as f32 - start_position.y as f32) * eased;
+
+                window
+                    .set_size(Size::Physical(PhysicalSize::new(
+                        next_width.round().max(1.0) as u32,
+                        next_height.round().max(1.0) as u32,
+                    )))
+                    .map_err(|error| error.to_string())?;
+                window
+                    .set_position(Position::Physical(PhysicalPosition::new(
+                        next_x.round() as i32,
+                        next_y.round() as i32,
+                    )))
+                    .map_err(|error| error.to_string())?;
+
+                if step < WINDOW_ANIMATION_STEPS {
+                    std::thread::sleep(Duration::from_millis(WINDOW_ANIMATION_STEP_MS));
+                }
             }
         }
-    }
 
-    window
-        .set_size(Size::Physical(size))
-        .map_err(|error| error.to_string())?;
-    window
-        .set_position(Position::Physical(position))
-        .map_err(|error| error.to_string())?;
-    window
-        .set_min_size(min_size.map(Size::Physical))
-        .map_err(|error| error.to_string())?;
-    Ok(())
+        window
+            .set_size(Size::Physical(size))
+            .map_err(|error| error.to_string())?;
+        window
+            .set_position(Position::Physical(position))
+            .map_err(|error| error.to_string())?;
+        Ok(())
+    })();
+
+    let constraints_result = apply_window_constraints(window, min_size, max_size, resizable);
+    geometry_result?;
+    constraints_result
 }
 
 fn set_window_topmost(window: &WebviewWindow, enabled: bool) -> Result<(), String> {
@@ -381,61 +461,80 @@ fn set_window_topmost(window: &WebviewWindow, enabled: bool) -> Result<(), Strin
 
 fn enter_dock_mode(window: &WebviewWindow, side: DockSide) -> Result<(), String> {
     let app = window.app_handle();
-    let (_, _, work_area) = window_geometry(window)?;
-    let mut settings = load_settings_fallback();
-    persist_normal_geometry(window, &mut settings)?;
-    settings.dock_side = Some(side.as_str().to_string());
-    save_settings_direct(settings)?;
+    if !should_enter_dock_mode(current_dock_visual_state(app).0) {
+        return Ok(());
+    }
 
-    set_window_rect(
-        window,
-        &app,
-        PhysicalSize::new(DOCK_STRIP_WIDTH, DOCK_STRIP_HEIGHT),
-        dock_position(side, work_area),
-        Some(PhysicalSize::new(DOCK_STRIP_WIDTH, DOCK_STRIP_HEIGHT)),
-    )?;
-    set_window_topmost(window, true)?;
+    run_dock_transition(app, || {
+        let (_, _, work_area) = window_geometry(window)?;
+        let mut settings = load_settings_fallback();
+        persist_normal_geometry(window, &mut settings)?;
+        settings.dock_side = Some(side.as_str().to_string());
+        save_settings_direct(settings)?;
 
-    with_dock_state(&app, |state| {
-        state.state = DockVisualState::Collapsed;
-        state.side = Some(side);
-    })?;
-    emit_dock_state(&app)?;
-    Ok(())
+        let strip_size = PhysicalSize::new(DOCK_STRIP_WIDTH, DOCK_STRIP_HEIGHT);
+        set_window_rect(
+            window,
+            app,
+            strip_size,
+            dock_position(side, work_area),
+            Some(strip_size),
+            Some(strip_size),
+            false,
+        )?;
+        set_window_topmost(window, true)?;
+
+        with_dock_state(app, |state| {
+            state.state = DockVisualState::Collapsed;
+            state.side = Some(side);
+        })?;
+        Ok(())
+    })
 }
 
 fn expand_dock_mode(window: &WebviewWindow) -> Result<(), String> {
     let app = window.app_handle();
-    let (_, _, work_area) = window_geometry(window)?;
-    let settings = load_settings_fallback();
-    let side = current_dock_visual_state(&app)
-        .1
-        .or_else(|| DockSide::from_option(settings.dock_side.as_deref()))
-        .ok_or_else(|| "window is not docked".to_string())?;
-    let expanded_size = normalized_expanded_size(&settings);
-    let position = expanded_position(side, work_area, expanded_size, settings.dock_last_y);
+    if !should_expand_dock_mode(current_dock_visual_state(app).0) {
+        return Ok(());
+    }
 
-    set_window_rect(
-        window,
-        &app,
-        expanded_size,
-        position,
-        Some(default_expanded_size()),
-    )?;
-    set_window_topmost(window, true)?;
+    run_dock_transition(app, || {
+        let (_, _, work_area) = window_geometry(window)?;
+        let settings = load_settings_fallback();
+        let side = current_dock_visual_state(app)
+            .1
+            .or_else(|| DockSide::from_option(settings.dock_side.as_deref()))
+            .ok_or_else(|| "window is not docked".to_string())?;
+        let expanded_size = normalized_expanded_size(&settings);
+        let position = expanded_position(side, work_area, expanded_size, settings.dock_last_y);
 
-    with_dock_state(&app, |state| {
-        state.state = DockVisualState::Expanded;
-        state.side = Some(side);
-    })?;
-    emit_dock_state(&app)?;
-    Ok(())
+        set_window_rect(
+            window,
+            app,
+            expanded_size,
+            position,
+            Some(default_expanded_size()),
+            Some(maximum_expanded_size()),
+            true,
+        )?;
+        set_window_topmost(window, true)?;
+
+        with_dock_state(app, |state| {
+            state.state = DockVisualState::Expanded;
+            state.side = Some(side);
+        })?;
+        Ok(())
+    })
 }
 
 fn collapse_dock_mode(window: &WebviewWindow) -> Result<(), String> {
     let app = window.app_handle();
-    let side = current_dock_visual_state(&app)
-        .1
+    let (visual_state, current_side) = current_dock_visual_state(app);
+    if !should_collapse_dock_mode(visual_state) {
+        return Ok(());
+    }
+
+    let side = current_side
         .or_else(|| {
             let settings = load_settings_fallback();
             DockSide::from_option(settings.dock_side.as_deref())
@@ -452,75 +551,92 @@ fn collapse_dock_mode(window: &WebviewWindow) -> Result<(), String> {
 
 fn undock_in_place(window: &WebviewWindow) -> Result<(), String> {
     let app = window.app_handle();
-    let mut settings = load_settings_fallback();
-    persist_normal_geometry(window, &mut settings)?;
-    settings.dock_side = None;
-    save_settings_direct(settings)?;
-    window
-        .set_min_size(Some(Size::Physical(default_expanded_size())))
-        .map_err(|error| error.to_string())?;
-    set_window_topmost(window, false)?;
-    with_dock_state(&app, |state| {
-        state.state = DockVisualState::Normal;
-        state.side = None;
-    })?;
-    emit_dock_state(&app)?;
-    Ok(())
+    if current_dock_visual_state(app).0 != DockVisualState::Expanded {
+        return Ok(());
+    }
+
+    run_dock_transition(app, || {
+        let mut settings = load_settings_fallback();
+        persist_normal_geometry(window, &mut settings)?;
+        settings.dock_side = None;
+        save_settings_direct(settings)?;
+        apply_window_constraints(
+            window,
+            Some(default_expanded_size()),
+            Some(maximum_expanded_size()),
+            true,
+        )?;
+        set_window_topmost(window, false)?;
+        with_dock_state(app, |state| {
+            state.state = DockVisualState::Normal;
+            state.side = None;
+        })?;
+        Ok(())
+    })
 }
 
 fn exit_dock_mode_impl(window: &WebviewWindow) -> Result<(), String> {
     let app = window.app_handle();
-    let (visual_state, current_side) = current_dock_visual_state(&app);
+    let (visual_state, current_side) = current_dock_visual_state(app);
     if visual_state == DockVisualState::Normal {
         let mut settings = load_settings_fallback();
         persist_normal_geometry(window, &mut settings)?;
         settings.dock_side = None;
         save_settings_direct(settings)?;
+        apply_window_constraints(
+            window,
+            Some(default_expanded_size()),
+            Some(maximum_expanded_size()),
+            true,
+        )?;
         set_window_topmost(window, false)?;
-        with_dock_state(&app, |state| {
+        with_dock_state(app, |state| {
             state.side = None;
         })?;
-        emit_dock_state(&app)?;
+        emit_dock_state(app)?;
         return Ok(());
     }
 
-    let (_, _, work_area) = window_geometry(window)?;
-    let mut settings = load_settings_fallback();
-    let side = current_side.or_else(|| DockSide::from_option(settings.dock_side.as_deref()));
-    let expanded_size = normalized_expanded_size(&settings);
-    let position = if let Some(side) = side {
-        expanded_position(side, work_area, expanded_size, settings.dock_last_y)
-    } else {
-        PhysicalPosition::new(
-            settings.dock_last_x.unwrap_or(work_area.position.x),
-            clamp_position_y(
-                work_area,
-                expanded_size.height,
-                settings.dock_last_y.unwrap_or(work_area.position.y),
-            ),
-        )
-    };
+    run_dock_transition(app, || {
+        let (_, _, work_area) = window_geometry(window)?;
+        let mut settings = load_settings_fallback();
+        let side = current_side.or_else(|| DockSide::from_option(settings.dock_side.as_deref()));
+        let expanded_size = normalized_expanded_size(&settings);
+        let position = if let Some(side) = side {
+            expanded_position(side, work_area, expanded_size, settings.dock_last_y)
+        } else {
+            PhysicalPosition::new(
+                settings.dock_last_x.unwrap_or(work_area.position.x),
+                clamp_position_y(
+                    work_area,
+                    expanded_size.height,
+                    settings.dock_last_y.unwrap_or(work_area.position.y),
+                ),
+            )
+        };
 
-    set_window_rect(
-        window,
-        &app,
-        expanded_size,
-        position,
-        Some(default_expanded_size()),
-    )?;
-    set_window_topmost(window, false)?;
+        set_window_rect(
+            window,
+            app,
+            expanded_size,
+            position,
+            Some(default_expanded_size()),
+            Some(maximum_expanded_size()),
+            true,
+        )?;
+        set_window_topmost(window, false)?;
 
-    settings.dock_side = None;
-    settings.dock_last_x = Some(position.x);
-    settings.dock_last_y = Some(position.y);
-    save_settings_direct(settings)?;
+        settings.dock_side = None;
+        settings.dock_last_x = Some(position.x);
+        settings.dock_last_y = Some(position.y);
+        save_settings_direct(settings)?;
 
-    with_dock_state(&app, |state| {
-        state.state = DockVisualState::Normal;
-        state.side = None;
-    })?;
-    emit_dock_state(&app)?;
-    Ok(())
+        with_dock_state(app, |state| {
+            state.state = DockVisualState::Normal;
+            state.side = None;
+        })?;
+        Ok(())
+    })
 }
 
 fn persist_geometry_after_idle(window: &WebviewWindow) -> Result<(), String> {
@@ -529,9 +645,12 @@ fn persist_geometry_after_idle(window: &WebviewWindow) -> Result<(), String> {
     }
 
     let app = window.app_handle();
+    if is_dock_transition_in_progress(app) {
+        return Ok(());
+    }
     let (position, size, work_area) = window_geometry(window)?;
     let mut settings = load_settings_fallback();
-    let (visual_state, _) = current_dock_visual_state(&app);
+    let (visual_state, _) = current_dock_visual_state(app);
 
     match visual_state {
         DockVisualState::Normal => {
@@ -549,10 +668,10 @@ fn persist_geometry_after_idle(window: &WebviewWindow) -> Result<(), String> {
                 persist_normal_geometry(window, &mut settings)?;
                 settings.dock_side = Some(side.as_str().to_string());
                 save_settings_direct(settings)?;
-                with_dock_state(&app, |state| {
+                with_dock_state(app, |state| {
                     state.side = Some(side);
                 })?;
-                emit_dock_state(&app)?;
+                emit_dock_state(app)?;
             } else {
                 undock_in_place(window)?;
             }
@@ -590,6 +709,7 @@ fn create_main_window(app: &AppHandle) -> Result<(), String> {
         .title("UCAS Classer")
         .inner_size(expanded_size.width as f64, expanded_size.height as f64)
         .min_inner_size(DEFAULT_WINDOW_WIDTH as f64, DEFAULT_WINDOW_HEIGHT as f64)
+        .max_inner_size(MAX_WINDOW_WIDTH as f64, MAX_WINDOW_HEIGHT as f64)
         .visible(false)
         .decorations(false)
         .resizable(true);
@@ -599,9 +719,12 @@ fn create_main_window(app: &AppHandle) -> Result<(), String> {
     }
 
     let window = builder.build().map_err(|error| error.to_string())?;
-    window
-        .set_min_size(Some(Size::Physical(default_expanded_size())))
-        .map_err(|error| error.to_string())?;
+    apply_window_constraints(
+        &window,
+        Some(default_expanded_size()),
+        Some(maximum_expanded_size()),
+        true,
+    )?;
     set_window_topmost(&window, false)?;
     window
         .set_size(Size::Physical(expanded_size))
@@ -776,17 +899,17 @@ pub fn handle_main_window_event(window: &Window, event: &WindowEvent) {
     match event {
         WindowEvent::CloseRequested { api, .. } => {
             api.prevent_close();
-            if let Ok(main_window) = resolve_main_window(&window.app_handle()) {
+            if let Ok(main_window) = resolve_main_window(window.app_handle()) {
                 let _ = destroy_main_window(&main_window);
             }
         }
         WindowEvent::Moved(_) | WindowEvent::Resized(_) => {
             let app = window.app_handle();
-            if is_move_suppressed(&app) {
+            if is_move_suppressed(app) || is_dock_transition_in_progress(app) {
                 return;
             }
 
-            if let Ok(main_window) = resolve_main_window(&app) {
+            if let Ok(main_window) = resolve_main_window(app) {
                 if should_skip_geometry_tracking(&main_window).unwrap_or(false) {
                     return;
                 }
@@ -794,7 +917,7 @@ pub fn handle_main_window_event(window: &Window, event: &WindowEvent) {
                 // If the user drags the expanded docked window away from the edge,
                 // return to normal mode immediately instead of waiting for the
                 // delayed geometry check.
-                let (visual_state, _) = current_dock_visual_state(&app);
+                let (visual_state, _) = current_dock_visual_state(app);
                 if visual_state == DockVisualState::Expanded {
                     if let Ok((position, size, work_area)) = window_geometry(&main_window) {
                         if detect_dock_side(position, size, work_area).is_none() {
@@ -848,7 +971,7 @@ pub fn open_external_url(url: String) -> Result<(), String> {
             .args(["/C", "start", "", &url])
             .spawn()
             .map_err(|error| format!("failed to open external url: {error}"))?;
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -872,4 +995,39 @@ pub fn pick_folder_path(
         .blocking_pick_folder()
         .and_then(|path| path.into_path().ok())
         .map(|path| path.display().to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn expanded_size_rejects_strip_and_oversized_geometry() {
+        assert_eq!(
+            clamp_expanded_size(PhysicalSize::new(DOCK_STRIP_WIDTH, DOCK_STRIP_HEIGHT)),
+            default_expanded_size()
+        );
+        assert_eq!(
+            clamp_expanded_size(PhysicalSize::new(u32::MAX, u32::MAX)),
+            maximum_expanded_size()
+        );
+    }
+
+    #[test]
+    fn expanded_size_preserves_values_inside_the_supported_range() {
+        let expected = PhysicalSize::new(640, 840);
+        assert_eq!(clamp_expanded_size(expected), expected);
+    }
+
+    #[test]
+    fn dock_commands_only_run_from_valid_source_states() {
+        assert!(should_enter_dock_mode(DockVisualState::Normal));
+        assert!(should_enter_dock_mode(DockVisualState::Expanded));
+        assert!(!should_enter_dock_mode(DockVisualState::Collapsed));
+
+        assert!(should_expand_dock_mode(DockVisualState::Collapsed));
+        assert!(!should_expand_dock_mode(DockVisualState::Expanded));
+        assert!(should_collapse_dock_mode(DockVisualState::Expanded));
+        assert!(!should_collapse_dock_mode(DockVisualState::Collapsed));
+    }
 }
